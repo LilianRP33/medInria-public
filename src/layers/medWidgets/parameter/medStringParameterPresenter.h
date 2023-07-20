@@ -37,6 +37,7 @@ public:
     QDateEdit *buildDateEdit();
 	QLineEdit *buildLineEditPassword();
 	QWidget   *buildLineEditPasswordEyes();
+    QWidget *buildSearchPath();
 
 private:
     const QScopedPointer<medStringParameterPresenterPrivate> d;

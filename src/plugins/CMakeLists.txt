@@ -54,6 +54,7 @@ set(PLUGIN_LIST
   legacy/LCCLogDemons                                                    ON  
   legacy/manualRegistration                                              ON
   legacy/medAlgorithmPaint                                               ON
+  legacy/medBIDS                                                         ON
   legacy/medBinaryOperation                                              ON
   legacy/medCreateMeshFromMask                                           ON
   legacy/medFilteringWorkspaceL                                          ON

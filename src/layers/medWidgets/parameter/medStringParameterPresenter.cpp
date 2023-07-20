@@ -20,6 +20,12 @@
 #include <QDateEdit>
 #include <QPushButton>
 #include <QValidator>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QFileDialog>
+#include <QDir>
+
+#include <iostream>
 
 class medStringParameterPresenterPrivate
 {
@@ -62,6 +68,8 @@ QWidget* medStringParameterPresenter::buildWidget()
 		poWidgetRes = this->buildLineEditPassword(); break;
 	case 4:
 		poWidgetRes = this->buildLineEditPasswordEyes(); break;
+    case 5:
+        poWidgetRes = this->buildSearchPath(); break;
     case 0:
     default:
         poWidgetRes = this->buildLineEdit(); break;
@@ -163,4 +171,30 @@ QWidget * medStringParameterPresenter::buildLineEditPasswordEyes()
 
 
 	return pWidgetRes;
+}
+
+QWidget* medStringParameterPresenter::buildSearchPath(){
+    QWidget *widget = new QWidget;
+    QHBoxLayout * searchPath = new QHBoxLayout();
+
+    QLineEdit * displayPath = buildLineEdit();
+
+    QPushButton * searchButton = new QPushButton("...");
+    this->_connectWidget(searchButton);
+
+    auto *pParam = d->parameter;
+    connect(searchButton, &QPushButton::clicked, [=]() 
+    {
+        QString sourcesBidsRepository = QFileDialog::getExistingDirectory(nullptr, tr("Select a BIDS repository"), "/home");
+        if(!sourcesBidsRepository.isEmpty()){
+            displayPath->setText(QDir::toNativeSeparators(sourcesBidsRepository));
+            pParam->setValue(displayPath->text());
+        }
+    });
+
+    searchPath->addWidget(displayPath);
+    searchPath->addWidget(searchButton);
+    widget->setLayout(searchPath);
+
+    return widget;
 }
