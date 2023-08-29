@@ -14,10 +14,13 @@
 
 #include "medBIDSPluginExport.h"
 
+#include <itkImageIOBase.h>
+
 #include <medAbstractSource.h>
 #include <medStringParameter.h>
 //#include <writingPolicy/medBIDSWritingPolicy.h>
 #include <medGroupParameter.h>
+#include <medTriggerParameter.h>
 #include <QThread>
 
 class Worker;
@@ -120,10 +123,13 @@ public slots:
 
 
 private:
-    QStringList getAttributes(QString &line); // modifie la ligne d'un tsv pour en récupérer les attributs des colonnes
-    // Renvoie true si le fichier a pu être ouvrir et lu, renvoie false sinon
-    virtual bool getPatientsFromTsv(); // Lit un fichier "participants.tsv" pour en extraire le contenu. Renvoie un bool si fichier conforme et lecture ok 
-    virtual bool getSessionsFromTsv(QString parentId); // Lit un fichier "..._sessions.tsv" pour en extraire le contenu. Renvoie un bool si fichier conforme et lecture ok
+    QJsonObject readJsonFile(QString filePath); // Li et Extrait les données d'un fichier Json : fichiers médicaux ou dataset_description
+    void getDatasetDescription(QJsonObject jsonObj, QString parentKey); // Traite les données du fichier 'dataset_description.json' pour les afficher : récursion pour objets imbriqués
+    void getNiftiAttributesforMandatories(QString niftiPath); // Ajouter aux mandatoriesAttributes des "Files" les clés des fichiers nifti
+
+    QStringList getAttributesFromTsv(QString &line); // Extrait et renvoie une liste des attributs d'une ligne d'un tsv
+    bool getPatientsFromTsv(); // Lit un fichier "participants.tsv" pour en extraire le contenu. Renvoie true si fichier conforme et lecture ok 
+    bool getSessionsFromTsv(QString parentId); // Lit un fichier "..._sessions.tsv" pour en extraire le contenu. Renvoie true si fichier conforme et lecture ok
 
     // methods
     virtual QList<medAbstractSource::levelMinimalEntries> getSubjectMinimalEntries(QString &key);
@@ -136,11 +142,14 @@ private:
     QList<QMap<QString, QString>> getSessionMandatoriesAttributes(const QString &key);
     QList<QMap<QString, QString>> getDataMandatoriesAttributes(const QString &key);
     QList<QMap<QString, QString>> getFilesMandatoriesAttributes(const QString &key);
+    QList<QMap<QString, QString>> getDerivativeMandatoriesAttributes(const QString &key);
 
-    // Lecture d'un fichier Json : extraire des valeurs de tags DICOM
-    QJsonObject readJsonFile(QString file_path);
-
+    bool getSubjectAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes);
+    bool getSessionAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes);
     bool getFilesAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes);
+
+    void createBIDSDerivativeSubFolders(QString parentKey, QString derivativeType, QString &newPath); // Créer les sous-dossiers pour "derivatives" dans l'arborescence BIDS afin d'y copier un fichier
+    void createJsonDerivativeFile(QString sourcePath, QString jsonFilePath, QString derivativeType); // Créer le fichier json pour un fichier derivative
 
 private:
     // members
@@ -170,17 +179,24 @@ private:
 
 
     // Ajouts
-    // Corespondance nom de dossier sub ('participant_id') et reste des attributs pour un patient
-    QMap<QString, QList<QString>> patient_tsv;
+    // répertoire racine de l'arborescence BIDS
+    QString bids_path;
 
-    // Les sessions liées à un patient ('participant_id')
-    QMap<QString, QList<QString>> sessions_from_patient;
-    // Corespondance nom de dossier ses ('session_id') et reste des attributs pour une session
-    QMap<QString, QList<QString>> session_tsv;
+    // Corespondance nom de dossier sub ('participant_id') et attributs pour un patient : noms de colonnes/valeurs
+    QMap<QString, QMap<QString, QString>> participant_tsv;
 
-    // Potentiellement plus utilisé
-    // // Dans les mandatoriesAttributes des fichiers, permet de stocker les informations des tags du json pour les afficher pour les fichiers .nii.gz
-    // QMap<QString, QMap<QString, QString>> infos_nifti;
+    // Corespondance nom de dossier ses ('session_id') et attributs pour une session : noms de colonnes/valeurs
+    QMap<QString, QMap<QString, QString>> session_tsv;
+
+    // Contient les attributs et valeurs du fichier 'dataset_description.json'
+    QMap<QString, QString> descriptionDatasetValues;
+
+    // Bouton sur l'interface "sources" pour l'affichage du contenu de 'dataset_description.json'
+    medTriggerParameter *descriptionButton;
+
+    //test
+    itk::ImageIOBase::Pointer imageIO;
+
 };
 
 

@@ -16,19 +16,26 @@
 
 #include <medStringParameter.h>
 #include <medStringListParameter.h>
+#include <medDataHub.h>
 
-#include <QDebug>
+#include <medDataInfoWidget.h>
+
+#include <itkImageIOFactory.h>
+#include <itkMetaDataObject.h>
 
 #include <QDir>
 #include <QFile>
 #include <QDirIterator>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QJsonArray>
+#include <QRegExp>
 #include <iostream>
+#include <QDebug>
 
-#include <QUuid>
-#include <QThread>
+
+
 
 std::atomic<int> medBIDS::s_RequestId = 0;
 
@@ -39,46 +46,32 @@ medBIDS::medBIDS()
       //tree depth
       m_LevelNames({"subject", "session", "data", "files"})
 {
-    root_path = new medStringParameter("RootPath", this);
-    // Permettre l'affichage correspondant dans la partie "Sources" de l'interface
+    // root_path contient le chemin vers un fichier 'dataset_description.json'
+    root_path = new medStringParameter("Description File", this);
     root_path->setDefaultRepresentation(3);
-    // QObject::connect(root_path, &medStringParameter::valueChanged, [&](QString const &path){
-    //     if(!path.isEmpty()){
-    //         root_path->setValue(path);
-    //     }
-    // });
 
-    // Niveaux de l'arbo et leurs attributs : un attribut mentionnant le parent pour chaque niveau
-    m_MandatoryKeysByLevel["Subject"] = QStringList({"id", "name", "subjectSourceId", "protocol", "center", "description", "type"});
-    m_MandatoryKeysByLevel["Session"] = QStringList({"id", "name", "sessionSourceId", "description", "type"});
+    // Bouton pour afficher les données du 'dataset_description.json'
+    descriptionButton = new medTriggerParameter("Show file content");
+    QObject::connect(descriptionButton, &medTriggerParameter::pushed, [&](bool state){ 
+        if(state){
+            auto popupDataInfo = new medDataInfoWidget(descriptionDatasetValues);
+            popupDataInfo->show();
+        }
+    });
+
+    // Niveaux de l'arbo et leurs attributs
+    m_MandatoryKeysByLevel["Subject"] = QStringList({"id", "name", "description", "type"});
+    m_MandatoryKeysByLevel["Session"] = QStringList({"id", "name", "description", "type"});
     m_MandatoryKeysByLevel["Data"] = QStringList({"id", "name", "description", "type"});
-    m_MandatoryKeysByLevel["Files"] = QStringList({"id", "SeriesDescription", "description", "type", 
-                                                    "Modality", "SeriesDescription", "ProtocolName", "SeriesNumber", "ImageType"});
-                                                
-
-
-    // m_pWorker = new Worker();
-    // m_pWorker->moveToThread(&m_Thread);
-    // // Creates connections from the signal (2) in the sender object (1) to the method (4) in the receiver object (3)
-    // bool c1 = QObject::connect(m_pWorker, &Worker::signalWithDelay, m_pWorker, &Worker::sendSignalWithDelay);
-    // bool c2 = QObject::connect(m_pWorker, &Worker::sendProgress, this, [&](int requestId, int status)
-    // {
-    //     emit progress(requestId, (medAbstractSource::eRequestStatus)status);
-    // });
-    // m_Thread.start();
+    m_MandatoryKeysByLevel["Files"] = QStringList({"id", "SeriesDescription", "description", "type"});                                             
 }
-
 
 medBIDS::~medBIDS()
 {
-    // Indique à la boucle d'évènements de se terminer, attend qu'une condition se termine (exécution terminée ou délai atteint)
-    // m_Thread.quit();
-    // m_Thread.wait();
     // Termine la connexion
     connect(false);
 }
 
-// Les deux fonctions suivantes initialisent puis donnent un id et un nom, tout deux passés en paramètres
 
 bool medBIDS::initialization(const QString &pi_instanceId)
 {
@@ -90,7 +83,6 @@ bool medBIDS::initialization(const QString &pi_instanceId)
 
     return bRes;
 }
-
 
 bool medBIDS::setInstanceName(const QString &pi_instanceName)
 {
@@ -104,43 +96,141 @@ bool medBIDS::setInstanceName(const QString &pi_instanceName)
 }
 
 
+QJsonObject medBIDS::readJsonFile(QString filePath){
+    QJsonObject jsonObj;
+    // Ouvre le fichier
+    QFile file(filePath);
+    if(!file.open(QIODevice::ReadOnly)){
+        return jsonObj;
+    }
+
+    // Lit le fichier pour récupérer le contenu tel quel
+    QString content(file.readAll());
+    file.close();
+
+    // QByteArray en paramètre : tableau d'octets
+    // Le transforme en objet Json pour simplifier la récupération des valeurs (similaire à QMap -> dictionnaire)
+    if(!content.isEmpty()){
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(content.toUtf8());
+        jsonObj = jsonDoc.object();
+    }
+
+    return jsonObj;
+}
+
+void medBIDS::getDatasetDescription(QJsonObject jsonObj, QString parentKey)
+{
+    for(auto key : jsonObj.keys()){
+        QJsonValue jsonValue = jsonObj.value(key);
+        if(jsonValue.isObject()){
+            if(!parentKey.isEmpty()){
+                key.prepend(parentKey + ":");
+            }
+            // Objets imbriqués : garde la clé parent
+            getDatasetDescription(jsonValue.toObject(), key);
+        }
+        else if(jsonValue.isArray())
+        {
+            QJsonArray jsonTab(jsonValue.toArray());
+            // 'elements' sert de mise en forme si pas Object alors QString
+            QString elements = "[";
+            for(auto tabValue : jsonTab){
+                if(tabValue.isObject()){
+                    if(!parentKey.isEmpty()){
+                        key.prepend(parentKey + ":");
+                    }
+                    // Objets imbriqués : garde la clé parent
+                    getDatasetDescription(tabValue.toObject(), key);
+                }else{
+                    elements.append(tabValue.toString() + "; ");
+                }
+            }
+            if(elements.size() > 1){
+                elements.chop(2);
+                elements.append("]");
+                descriptionDatasetValues[key] = elements;
+            }
+        }
+        else if(!parentKey.isEmpty())
+        {
+            // cas objets imbriqués : ajoute la clé parent
+            descriptionDatasetValues[parentKey + ":" + key] = jsonValue.toString();
+        }
+        else
+        {
+            descriptionDatasetValues[key] = jsonValue.toString();
+        }
+    }
+}
+
+void medBIDS::getNiftiAttributesforMandatories(QString niftiPath){
+    imageIO = itk::ImageIOFactory::CreateImageIO(niftiPath.toLatin1().constData(), itk::ImageIOFactory::ReadMode);
+    if (!imageIO.IsNull()){
+        // deux lignes nécessaires sinon ne reconnaît pas en tant que fichier nifti
+        imageIO->SetFileName(niftiPath.toLatin1().constData());
+        try{
+            imageIO->ReadImageInformation();
+        }catch(itk::ExceptionObject &e){
+            qDebug() << e.GetDescription();
+        }
+
+        itk::MetaDataDictionary& metaDataDictionary = imageIO->GetMetaDataDictionary();
+        std::vector<std::string> niftiKeys = metaDataDictionary.GetKeys();
+
+        QStringList filesAttributes = m_MandatoryKeysByLevel["Files"];
+        for(auto niftiKey : niftiKeys){
+            filesAttributes.append(niftiKey.c_str());
+        }
+
+        // Remplacement liste mandatoriesAttributes avec les nouveaux éléments
+        m_MandatoryKeysByLevel.insert("Files", filesAttributes);
+    }
+}
+
+
 bool medBIDS::connect(bool pi_bEnable)
 {
     bool bRes = false;
     if (pi_bEnable) // establish connection
     {
-        // Vérifie que la valeur (= chemin d'entrée) n'est pas vide et existe localement 
-        QDir path_dir(root_path->value());
-        if (!root_path->value().isEmpty() && path_dir.exists())
+        // extrait le chemin du répertoire -> racine arborescence
+        if(!root_path->value().isEmpty()){
+            bids_path = root_path->value().remove("dataset_description.json");
+            bRes = true;
+        }
+
+        // Vérifie que la valeur (= chemin d'entrée) n'est pas vide et que le répertoire existe localement 
+        QDir dirPath(bids_path);
+        if (dirPath.exists() && bRes)
         {
-            // Normalisation : si le chemin ne finit pas par "/", en ajoute un
-            if(!(root_path->value()).endsWith("/")){
-                root_path->setValue(root_path->value() + "/");
+            // Vérifie que le fichier 'data_description.json' existe et en extrait le contenu
+            QString filePath(root_path->value());
+            QFileInfo descriptionFile(filePath);
+            if(descriptionFile.exists() && descriptionFile.isFile()){
+                bRes = true;
+                QJsonObject jsonObj(readJsonFile(filePath));
+                if(!jsonObj.isEmpty()){
+                    getDatasetDescription(jsonObj, "");
+                }
             }
 
             // Vérifie qu'il existe des dossiers sujets ("sub-") dans le répertoire du chemin d'entrée 
-            QDir dir(root_path->value());
-            QStringList sub_prefixes({"sub-*"});
-            QFileInfoList files_list = dir.entryInfoList(sub_prefixes);
-            if(!files_list.isEmpty()){
+            QDir dir(bids_path);
+            QStringList subPrefixes({"sub-*"});
+            QFileInfoList filesList = dir.entryInfoList(subPrefixes);
+            if(!filesList.isEmpty() && bRes){
                 // Vérifie qu'il existe au moins un fichier au format '.nii.gz' dans les sous-dossiers du répertoire
-                QDirIterator it(root_path->value(), QDirIterator::Subdirectories);
-                bool exist = false;
+                QDirIterator it(bids_path, QDir::Files, QDirIterator::Subdirectories);
                 while(it.hasNext()) {
-                    QString sub_dirs = it.next();
-                    if(sub_dirs.contains(".nii.gz")){
-                        exist = true;
+                    QString subDirs = it.next();
+                    if(subDirs.contains(".nii.gz")){
+                        getNiftiAttributesforMandatories(subDirs);
+                        bRes = true;
                         break;
                     }
                 }
-                if(exist){
-                    // Vérifie qu'il existe un fichier 'participants.tsv' à la racine du répertoire
-                    QFileInfo tsv_info(root_path->value() + "participants.tsv");
-                    if(tsv_info.exists() && tsv_info.isFile()){
-                        // Appel une fonction qui ouvre le fichier pour en extraire le contenu dans une QMap
-                        bRes = getPatientsFromTsv();
-                    }
-                }
+            }else{
+                bRes = false;
             }
         }
         m_online = bRes;
@@ -151,7 +241,7 @@ bool medBIDS::connect(bool pi_bEnable)
     return bRes;
 }
 
-QStringList medBIDS::getAttributes(QString &line){
+QStringList medBIDS::getAttributesFromTsv(QString &line){
     int quote = 0;
 
     for(int idx = 0; idx < line.size(); ++idx){
@@ -163,9 +253,9 @@ QStringList medBIDS::getAttributes(QString &line){
         }
     }
 
-    // Le split ne prend plus en compte les espaces dans les chaînes entre " "
-    QStringList attributes = line.split(" ");
-    // Remplace les ~ précédents par des espaces
+    // La fonction 'split' ne prend plus en compte les espaces dans les chaînes entre " "
+    QStringList attributes = line.split(QRegExp("\\s+"));
+    // Remplace les '~' précédents par des espaces
     for(int i=0; i < attributes.size(); ++i){
         attributes[i].replace("~", " ");
         attributes[i].remove("\"");
@@ -176,72 +266,83 @@ QStringList medBIDS::getAttributes(QString &line){
 
 bool medBIDS::getPatientsFromTsv(){
     // Ouvre le fichier "participants.tsv"
-    QFile tsv_file(root_path->value() + "participants.tsv");
-    if (!tsv_file.open(QIODevice::ReadOnly))
+    QFile tsvFile(bids_path + "participants.tsv");
+    if (!tsvFile.open(QIODevice::ReadOnly))
         return false;
 
     // Lit l'en-tête du fichier pour vérifier qu'il y a au moins la colonne 'participant_id' (1ère position)
-    QTextStream in(&tsv_file); 
-    QString line = in.readLine();
-    QStringList l = line.split(" ");
-    if(l[0].compare("participant_id") != 0){
+    QTextStream in(&tsvFile); 
+    QString header = in.readLine();
+    QStringList keys = header.split(QRegExp("\\s+"));
+    if(keys[0].compare("participant_id") != 0){
         return false;
     }
 
+    QMap<QString, QString> patientValues;
     // Lit le fichier ligne par ligne
     while(!in.atEnd()){
         QString line = in.readLine();
-        QStringList l = getAttributes(line);
+        QStringList values = getAttributesFromTsv(line);
 
-        // Clé = participant_id, valeur = liste d'attributs de la ligne correspondante dans le fichier .tsv
-        patient_tsv[l[0]] = l;
+        if(keys.size() == values.size()){
+            for(int i=0; i < keys.size(); ++i){
+                patientValues[keys[i]] = values[i];
+            }
+        }
+
+        // Clé = participant_id, valeur = QMap avec valeurs (value) des attributs (key) des noms de colonnes du fichier .tsv
+        participant_tsv[values[0]] = patientValues;
     }
 
     return true;
 }
 
 bool medBIDS::getSessionsFromTsv(QString parentId){
-    // Crée le chemin du répertoire propre au 'parentId' = se place dans le dossier sub
-    QString sub_path(root_path->value() + parentId + "/");
-    QDir dir(sub_path);
+    //Crée le chemin du répertoire propre au 'parentId' = se place dans le dossier sub
+    QString subPath(bids_path + parentId + "/");
+    QDir dir(subPath);
 
     // Chercher le fichier .tsv
     QStringList filters({"*.tsv"});
-    QFileInfoList files_list = dir.entryInfoList(filters);
+    QFileInfoList filesList = dir.entryInfoList(filters);
     // Vérifier qu'il existe, il ne doit y en avoir qu'un dans un dossier sub
-    if(files_list.isEmpty() || files_list.size() != 1){
+    if(filesList.isEmpty() || filesList.size() != 1){
         return false;
     }
-    
+
     // Essaye d'ouvrir le fichier en lecture
-    QFile tsv_file(sub_path + files_list[0].fileName());
-    if (!tsv_file.open(QIODevice::ReadOnly))
+    QFile tsvFile(subPath + filesList[0].fileName());
+    if (!tsvFile.open(QIODevice::ReadOnly))
         return false;
 
     // Lit l'en-tête du fichier pour vérifier qu'il y a au moins la colonne 'session_id' (1ère position)
-    QTextStream in(&tsv_file); 
-    QString line = in.readLine();
-    QStringList l = line.split(" ");
-    if(l[0].compare("session_id") != 0){
+    QTextStream in(&tsvFile); 
+    QString header = in.readLine();
+    QStringList keys = header.split(QRegExp("\\s+"));
+    if(keys[0].compare("session_id") != 0){
         return false;
     }
 
     // Lit le fichier ligne par ligne
-    QList<QString> ses;
+    QMap<QString, QString> sessionValues;
     while(!in.atEnd()){
         QString line = in.readLine();
-        QStringList l = getAttributes(line);
+        QStringList values = getAttributesFromTsv(line);
 
-        // Clé = session_id, valeur = liste d'attributs de la ligne correspondante dans le fichier .tsv
-        session_tsv[l[0]] = l;
-        // Crée une liste des sessions qu'a effectué le patient
-        ses.append(l[0]);
+        if(keys.size() == values.size()){
+            for(int i=0; i < keys.size(); ++i){
+                sessionValues[keys[i]] = values[i];
+            }
+        }
+
+        // Clé = sub-..._session_id, valeur = QMap avec valeurs (value) des attributs (key) des noms de colonnes du fichier .tsv
+        QString id = parentId + "_" + values[0];
+        session_tsv[id] = sessionValues;
     }
-    // Clé = participant_id, valeur = la liste des sessions qui lui sont associées
-    sessions_from_patient[parentId] = ses;
 
     return true;
 }
+
 
 // met à jour interface graphique 
 QList<medAbstractParameter *> medBIDS::getAllParameters()
@@ -249,6 +350,7 @@ QList<medAbstractParameter *> medBIDS::getAllParameters()
     QList<medAbstractParameter *> paramListRes;
 
     paramListRes.push_back(root_path);
+    paramListRes.push_back(descriptionButton);
 
     return paramListRes;
 }
@@ -350,20 +452,19 @@ bool  medBIDS::isLevelWritable(unsigned int pi_uiLevel)
     return pi_uiLevel == 3;
 }
 
-
 // Permet d'obtenir les attributs qui composent un niveau
 QStringList medBIDS::getMandatoryAttributesKeys(unsigned int pi_uiLevel)
 {
     switch (pi_uiLevel)
     {
         case 0:
-            return m_MandatoryKeysByLevel["Subject"];//return {"id", "name", "subjectSourceId", "protocol", "center"};
+            return m_MandatoryKeysByLevel["Subject"];//return {"id", "name", "description", "type"};
         case 1:
-            return m_MandatoryKeysByLevel["Session"];//return {"id", "name", "sessionSourceId"};
+            return m_MandatoryKeysByLevel["Session"];//return {"id", "name", "description", "type"};
         case 2:
-            return m_MandatoryKeysByLevel["Data"];//return {"id", "name"};
+            return m_MandatoryKeysByLevel["Data"];//return {"id", "name", "description", "type"};
         case 3:
-            return m_MandatoryKeysByLevel["Files"];//return {"id", "name", "Modality", "SeriesDescription", "ProtocolName", "BodyPartExamined"};
+            return m_MandatoryKeysByLevel["Files"];//return {"id", "SeriesDescription", "description", "type"};
         default:
             return QStringList();
     }
@@ -403,27 +504,25 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getSubjectMinimalEntries(
 {
     QList<levelMinimalEntries> subjectEntries;
 
-    // Obtient le répertoire du chemin d'accès
-    QDir dir(root_path->value());
+    // Obtient le répertoire racine
+    QDir dir(bids_path);
 
     // Récupère tous les dossiers du répertoire contenant le préfixe "sub-"
     QStringList prefixes({"sub-*"});
-    QFileInfoList files_list = dir.entryInfoList(prefixes, QDir::Dirs);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Dirs);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un dossier
         if(!file.isFile()){
 
             // Test si le dossier (= 'participant_id') de cette entité sujet appartient à la QMap (= inclus dans le fichier .tsv)
-            if(!patient_tsv.contains(file.fileName())){
+            if(!participant_tsv.contains(file.fileName())){
                 continue;
             }
-            // Récupère les valeurs de la clé de l'entité subject ('participant_id')
-            QStringList attributes = patient_tsv.value(file.fileName());
 
             // Complète les attributs
             levelMinimalEntries entry;
-            entry.key = attributes[0];
-            entry.name = attributes[0];
+            entry.key = file.fileName();
+            entry.name = file.fileName();
             entry.description = "";
             entry.type = entryType::folder;
             subjectEntries.append(entry);
@@ -443,32 +542,26 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getSessionMinimalEntries(
         return sessionEntries;
     }
 
-    // Récupère la liste des sessions du patient 
-    QList<QString> ses = sessions_from_patient.value(parentId);
-
     // Reconstruit le chemin d'accès pour se positionner dans le dossier sub
-    QDir dir(root_path->value() + parentId + "/");
+    QDir dir(bids_path + parentId + "/");
 
     // Récupère tous les dossiers du répertoire contenant le préfixe "ses-"
     QStringList prefixes({"ses-*"});
-    QFileInfoList files_list = dir.entryInfoList(prefixes, QDir::Dirs);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Dirs);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un dossier
         if(!file.isFile()){
     
-            // Vérifie que cette session appartient à celles effctuées par ce patient (= mentionné dans le fichier .tsv)
-            if(!ses.contains(file.fileName())){
+            // Test si le dossier (= 'session_id') de cette entité sujet appartient à la QMap (= inclus dans le fichier .tsv)
+            if(!participant_tsv.contains(parentId + "_" + file.fileName())){
                 continue;
             }
-
-            // Récupère les valeurs correspondant à la cette session
-            QStringList attributes = session_tsv.value(file.fileName());
 
             // Complète les attributs
             levelMinimalEntries entry;
             // parentId pour mieux identifier quel patient est associé à cette session
-            entry.key = parentId + "_" + attributes[0];
-            entry.name = attributes[0];
+            entry.key = parentId + "_" + file.fileName();
+            entry.name = file.fileName();
             entry.description = "";
             entry.type = entryType::folder;
             sessionEntries.append(entry);
@@ -484,16 +577,16 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getDataMinimalEntries(QSt
     QList<levelMinimalEntries> dataEntries;
 
     // Identifie et récupère les entités subject et session correspondantes 
-    QStringList sub_dirs = parentId.split("_");
+    QStringList subDirs = parentId.split("_");
 
     // Reconstruit le chemin d'accès, à partir de ces entités, pour se positionner dans le dossier ses
-    QDir dir(root_path->value() + sub_dirs[0] + "/" + sub_dirs[1] + "/");
+    QDir dir(bids_path + subDirs[0] + "/" + subDirs[1] + "/");
 
     // Récupère tous les dossiers du répertoire contenant les types de données
-    QFileInfoList files_list = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un dossier
-        if(!file.isFile()){ // && !file.fileName().contains(".")){
+        if(!file.isFile()){
 
             // Récupère le titre du dossier pour compléter les attributs
             levelMinimalEntries entry;
@@ -515,35 +608,35 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getFilesMinimalEntries(QS
     QList<levelMinimalEntries> filesEntries;
 
     // Identifie et récupère les entités, subject et session, et le data correspondant
-    QStringList sub_dirs = parentId.split("_");
+    QStringList subDirs = parentId.split("_");
 
     // Reconstruit le chemin d'accès pour se positionner dans le répertoire du data
-    QString file_path(root_path->value() + sub_dirs[0] + "/" + sub_dirs[1] + "/" + sub_dirs[2] + "/");
-    QDir dir(file_path);
+    QString filePath(bids_path + subDirs[0] + "/" + subDirs[1] + "/" + subDirs[2] + "/");
+    QDir dir(filePath);
 
     // Récupère uniqument les fichiers au format json
     QStringList prefixes({"*.nii.gz"});
-    QFileInfoList files_list = dir.entryInfoList(prefixes, QDir::Files);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Files);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un fichier
         if(file.isFile()){
 
-            // Séparation avec ~ pour simplifier le getDirectData (et aller chercher le nifti): path ~ file_name
             // Enlever extension
-            QString file_name = file.fileName().split(".")[0];
+            QString fileName = file.fileName().split(".")[0];
 
             // Lit le fichier json
-            QJsonObject json_obj = readJsonFile(file_path + file.fileName());
+            QJsonObject jsonObj = readJsonFile(filePath + file.fileName());
             // Si cette liste n'est pas vide
-            QString file_series = "";
-            if(!json_obj.isEmpty()){
+            QString fileSeries = "";
+            if(!jsonObj.isEmpty()){
                 //Récupère la valeur du tag "seriesDescription" pour le champ .name
-                file_series = json_obj.value("SeriesDescription").toString();
+                fileSeries = jsonObj.value("SeriesDescription").toString();
             }
 
             levelMinimalEntries entry;
-            entry.key = parentId + "~" + file_name;
-            entry.name = file_series;
+            // Séparation avec '~' pour simplifier le getDirectData (et aller chercher le nifti pour getDirectData): path ~ file_name
+            entry.key = parentId + "~" + fileName;
+            entry.name = fileSeries;
             entry.description = "";
             entry.type = entryType::dataset;
             filesEntries.append(entry);
@@ -586,36 +679,36 @@ QList<QMap<QString, QString>> medBIDS::getSubjectMandatoriesAttributes(const QSt
 {
     QList< QMap<QString, QString>> subjectAttributes;
 
-    // Récupère les clés du niveau entité 'subject'
-    QStringList subjectKeys = getMandatoryAttributesKeys(0); //Subject
+    //Test si le dossier possède un fichier .tsv de session et en extrait les données le cas échéant
+    bool tsvExists = getPatientsFromTsv();
 
-    // se place dans le répertoire
-    QDir dir(root_path->value());
-    // Trouve tous les dossiers des subject
+    // se place dans le répertoire racine
+    QDir dir(bids_path);
+    // Trouve tous les dossiers des 'subject'
     QStringList prefixes({"sub-*"});
-    QFileInfoList files_list = dir.entryInfoList(prefixes, QDir::Dirs);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Dirs);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un dossier
         if(!file.isFile()){
 
-            // Test si le participant_id de cette entité appartient à la QMap
-            if(!patient_tsv.contains(file.fileName())){
-                continue;
+            if(tsvExists){
+                // Récupère les valeurs de la clé (= filename) si fichier .tsv il y a
+                QMap<QString, QString> attributes = participant_tsv.value(file.fileName());
+                if(!attributes.isEmpty()){
+                    // Test si le participant_id de cette entité appartient à la QMap et son participant_id est bien le même
+                    if(attributes["participant_id"] != file.fileName()){
+                        continue;
+                    }
+                }
             }
-
-            // Récupère les valeurs de la clé 'participant_id' (= filename)
-            QStringList attributes = patient_tsv.value(file.fileName());
 
             // Stocke les attributs dans une QMap : minimalEntries + subjectKeys
             QMap<QString, QString> subjectMap;
-            subjectMap["id"] = attributes[0];
+            subjectMap["id"] = file.fileName();
+            subjectMap["name"] = file.fileName();
             subjectMap["description"] = "";
             subjectMap["type"] = entryTypeToString(entryType::folder);
 
-            // Associe aux subjectKeys les attributes issus du fichier tsv
-            for(int i=1; i <= attributes.size(); ++i){
-                subjectMap[subjectKeys[i]] = attributes[i-1];
-            }
             subjectAttributes.append(subjectMap);
         }
     }
@@ -626,58 +719,45 @@ QList<QMap<QString, QString>> medBIDS::getSubjectMandatoriesAttributes(const QSt
 
 QList<QMap<QString, QString>> medBIDS::getSessionMandatoriesAttributes(const QString &key)
 {
-    QList< QMap<QString, QString>> sessionAttributes;
-
-    // Récupère les clés du niveau entité 'session'
-    QStringList sessionKeys = getMandatoryAttributesKeys(1); //Session
+    QList<QMap<QString, QString>> sessionAttributes;
 
     // Test si le dossier possède un fichier .tsv de session et en extrait les données le cas échéant
-    if(!getSessionsFromTsv(key)){
-        return sessionAttributes;
-    }
-
-    // Récupère la liste des sessions du patient 
-    QList<QString> ses = sessions_from_patient.value(key);
+    bool tsvExists = getSessionsFromTsv(key);
 
     // Reconstruit le chemin d'accès pour se placer dans le dossier sub
-    QDir dir(root_path->value() + key + "/");
+    QDir dir(bids_path + key + "/");
 
     // Chercher tous les dossiers du répertoire contenant le préfixe "ses-"
     QStringList prefixes({"ses-*"});
-    QFileInfoList files_list = dir.entryInfoList(prefixes);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(prefixes);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un dossier
         if(!file.isFile()){
+            QString id = key + "_" + file.fileName();
     
-            // Vérifie que cette session appartient bien à celles effectuées par ce patient
-            if(!ses.contains(file.fileName())){
-                continue;
+            // Vérifie que c'est une session du patient, donc contenue dans le fichier .tsv
+            if(tsvExists){
+                // Récupère les valeurs de la clé (= filename)
+                QMap<QString, QString> attributes = session_tsv.value(id);
+                if(!attributes.isEmpty()){
+                    // Test si le session_id de cette entité appartient à la QMap et son session_id est bien le même
+                    if(attributes["session_id"] != file.fileName()){
+                        continue;
+                    }
+                }
             }
-
-            // Récupère les valeurs de la clé 'session_id' (= filename)
-            QStringList attributes = session_tsv.value(file.fileName());
 
             // Stocke les attributs dans une QMap : minimalEntries + sessionKeys
             QMap<QString, QString> sessionMap;
             // key = participant_id
-            sessionMap["id"] = key + "_" + attributes[0];
+            sessionMap["id"] = key + "_" + file.fileName();
+            sessionMap["name"] = file.fileName();
             sessionMap["description"] = "";
             sessionMap["type"] = entryTypeToString(entryType::folder);
 
-            // Associe aux sessionKeys les attributes issus du fichier tsv
-            for(int i=1; i <= attributes.size(); ++i){
-                sessionMap[sessionKeys[i]] = attributes[i-1];
-            }
             sessionAttributes.append(sessionMap);
         }
     }
-
-    // juste un petit code pour afficher contenu
-    // for(auto attr : sessionAttributes){
-    //     for(auto key : attr.keys()){
-    //         std::cout << key.toStdString() << " : " << attr.value(key).toStdString() << std::endl;
-    //     }
-    // }
 
     return sessionAttributes;
 }
@@ -688,16 +768,16 @@ QList<QMap<QString, QString>> medBIDS::getDataMandatoriesAttributes(const QStrin
     QList< QMap<QString, QString>> dataAttributes;
 
     // Identifie et récupère les entités subject et session correspondantes 
-    QStringList sub_dirs = key.split("_");
+    QStringList subDirs = key.split("_");
 
     // Reconstruit le chemin d'accès pour se placer dans le dossier ses
-    QDir dir(root_path->value() + sub_dirs[0] + "/" + sub_dirs[1] + "/");
+    QDir dir(bids_path + subDirs[0] + "/" + subDirs[1] + "/");
 
     // Récupère tous les dossiers du répertoire contenant les types de données
-    QFileInfoList files_list = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un dossier
-        if(!file.isFile() ){ 
+        if(!file.isFile()){ 
 
             // Récupère le titre du dossier correspondant au data pour compléter les attributs
             QMap<QString, QString> dataMap;
@@ -711,112 +791,66 @@ QList<QMap<QString, QString>> medBIDS::getDataMandatoriesAttributes(const QStrin
         }
     }
 
-    // juste un petit code pour afficher contenu
-    // for(auto attr : dataAttributes){
-    //     for(auto key : attr.keys()){
-    //         std::cout << key.toStdString() << " : " << attr.value(key).toStdString() << std::endl;
-    //     }
-    // }
-
     return dataAttributes;
 }
-
-
-// Renvoie un objet qui contient le contenu du fichier json
-QJsonObject medBIDS::readJsonFile(QString file_path){
-    QJsonObject json_obj;
-    // Ouvre le fichier
-    QFile file(file_path);
-    if(!file.open(QIODevice::ReadOnly)){
-        return json_obj;
-    }
-
-    // Lit le fichier pour récupérer le contenu tel quel
-    QString content(file.readAll());
-    file.close();
-
-    // QByteArray en paramètre : tableau d'octets
-    // Le transforme en objet Json pour simplifier la récupération des valeurs (similaire à QMap -> dictionnaire)
-    if(!content.isEmpty()){
-        QJsonDocument json_doc = QJsonDocument::fromJson(content.toUtf8());
-        json_obj = json_doc.object();
-    }
-
-    return json_obj;
-}
-
 
 // Version 1
 QList<QMap<QString, QString>> medBIDS::getFilesMandatoriesAttributes(const QString &key)
 {
     QList< QMap<QString, QString>> filesAttributes;
 
-    // Récupère les clés du niveau 'files'
+    // Récupère les clés du niveau 'files' -> notamment clés nifti
     QStringList filesKeys = getMandatoryAttributesKeys(3); //Files
 
     // Identifie et récupère les entités, subject et session, et le data correspondant
-    QStringList sub_dirs = key.split("_");
+    QStringList subDirs = key.split("_");
 
     // Reconstruit le chemin d'accès pour ce placer dans le répertoire data
-    QString file_path(root_path->value() + sub_dirs[0] + "/" + sub_dirs[1] + "/" + sub_dirs[2] + "/");
-    QDir dir(file_path);
+    QString filePath(bids_path + subDirs[0] + "/" + subDirs[1] + "/" + subDirs[2] + "/");
+    QDir dir(filePath);
 
-    // Récupère uniqument les fichiers au format json
     QStringList prefixes({"*.nii.gz"});
-    QFileInfoList files_list = dir.entryInfoList(prefixes, QDir::Files);
-    for(auto file : files_list){
+    QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Files);
+    for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un fichier
         if(file.isFile()){
 
             // Récupère le nom du fichier pour compléter les attributs
             QMap<QString, QString> filesMap;
 
-            // Séparation avec ~ pour simplifier le getDirectData (et aller chercher le nifti): path ~ file_name
             // Enlever extension
-            QString file_name = file.fileName().split(".")[0];
+            QString fileName = file.fileName().split(".")[0];
+            // Séparation avec ~ pour simplifier le getDirectData (et aller chercher le nifti): path ~ file_name
             // key = participant_id + session_id + data
-            filesMap["id"] = key + "~" + file_name;
+            filesMap["id"] = key + "~" + fileName;
             filesMap["description"] = "";
             filesMap["type"] = entryTypeToString(entryType::dataset);
 
-            // Lit le fichier .json correspondant pour récupérer les clés/valeurs des tags DICOM
-            QJsonObject json_obj = readJsonFile(file_path + file_name + ".json");
+            // champ "SeriesDescription" (="name") = attribut "seriesDescription" fichier .json
+            QJsonObject jsonObj = readJsonFile(filePath + fileName + ".json");
             // Si cette liste n'est pas vide
-            if(!json_obj.isEmpty()){
-                filesMap["SeriesDescription"] = json_obj.value("SeriesDescription").toString();
-                // Récupère les valeurs des tags des MandatoryAttributesKeys
-                for(int i=4; i < filesKeys.size(); ++i){
-                    // Convertis la valeur en QString
-                    if(json_obj.value(filesKeys[i]).isString())
-                    {
-                        filesMap[filesKeys[i]] = json_obj.value(filesKeys[i]).toString();
-                    }
-                    else if(json_obj.value(filesKeys[i]).isArray()) //Si c'est un array, le transforme en array pour ensuite le parcourir
-                    {
-                        // Récupère le tableau pour récupérer son contenu en QString
-                        QJsonArray json_tab(json_obj.value(filesKeys[i]).toArray());
-                        QString types = "[";
-                        // auto = QJsonValueRef
-                        for(auto type : json_tab){
-                            if(type.isString()){
-                                types.append(type.toString() + ", ");
-                            }else{
-                                types.append(type.toVariant().toString() + ", ");
-                            }
-                        }
-                        // supprime les deux derniers caractères
-                        types.chop(2);
-                        types.append("]");
-                        filesMap[filesKeys[i]] = types;
-                    }
-                    else
-                    { // Si c'est un int, passe d'abord par une 'variant'
-                        filesMap[filesKeys[i]] = json_obj.value(filesKeys[i]).toVariant().toString();
-                    }
+            if(!jsonObj.isEmpty()){
+                filesMap["SeriesDescription"] = jsonObj.value("SeriesDescription").toString();
+            }
+
+            // Le reste des mandatoriesAttributes sont les données des nifti
+            QString niftiFile = filePath + fileName + ".nii.gz";
+            imageIO = itk::ImageIOFactory::CreateImageIO(niftiFile.toLatin1().constData(), itk::ImageIOFactory::ReadMode);
+            if (!imageIO.IsNull()){
+                // deux lignes nécessaires sinon ne reconnaît pas en tant que fichier nifti
+                imageIO->SetFileName(niftiFile.toLatin1().constData());
+                try{
+                    imageIO->ReadImageInformation();
+                }catch(itk::ExceptionObject &e){
+                    qDebug() << e.GetDescription();
                 }
-            }else{
-                // Si pas de json associé mais le nom du fichier pour le champ .name
-                filesMap["SeriesDescription"] = file_name;
+
+                itk::MetaDataDictionary& metaDataDictionary = imageIO->GetMetaDataDictionary();
+                for(int i=4; i < filesKeys.size(); i++){
+                    std::string niftiValue;
+                    itk::ExposeMetaData(metaDataDictionary, filesKeys[i].toStdString(), niftiValue);
+                    filesMap[filesKeys[i]] = niftiValue.c_str();
+                }
             }
 
             filesAttributes.append(filesMap);
@@ -831,15 +865,14 @@ QList<QMap<QString, QString>> medBIDS::getFilesMandatoriesAttributes(const QStri
  
 bool medBIDS::getAdditionalAttributes(unsigned int pi_uiLevel, QString id, datasetAttributes &po_attributes)
 {
-    std::cout << "Passe ici ?" << std::endl;
     bool res = false;
     switch (pi_uiLevel)
     {
         case 0:
-            res = true;
+            res = getSubjectAdditionalAttributes(id, po_attributes);
             break;
         case 1:
-            res = true;
+            res = getSessionAdditionalAttributes(id, po_attributes);
             break;
         case 2:
             res = true;
@@ -854,59 +887,96 @@ bool medBIDS::getAdditionalAttributes(unsigned int pi_uiLevel, QString id, datas
     return res;
 }
 
+bool medBIDS::getSubjectAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes)
+{
+    if(!participant_tsv.contains(key)){
+        return false;
+    }
+    
+    // S'il existe, récupère les clés et les valeurs pour le patient avec id 'key' dans le fichier .tsv
+    QMap<QString, QString> attributes = participant_tsv.value(key);
 
-bool medBIDS::getFilesAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes){
-    std::cout << "Test de l'affichage de la key :" << key.toStdString() << std::endl;
+    // Récupérer les clés obligatoires
+    QStringList subjectKeys = getMandatoryAttributesKeys(0);
 
-    // Recrée le chemin vers le fichier
+    for(auto key : attributes.keys()){
+        // Si la clé n'est pas déjà affichée dans les mandatories, alors affiche dans additional
+        if(!subjectKeys.contains(key)){
+            po_attributes.values[key] = attributes[key];
+        }
+    }
+
+    return true;
+}
+
+bool medBIDS::getSessionAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes)
+{
+    if(!session_tsv.contains(key)){
+        return false;
+    }
+
+    // // S'il existe, récupère les clés et les valeurs pour la session avec id 'key' dans le fichier .tsv
+    QMap<QString, QString> attributes = session_tsv.value(key);
+
+    // Récupérer les clés obligatoires
+    QStringList subjectKeys = getMandatoryAttributesKeys(1);
+
+    for(auto key : attributes.keys()){
+        // Si la clé n'est pas déjà affichée dans les mandatories, alors affiche dans additional
+        if(!subjectKeys.contains(key)){
+            po_attributes.values[key] = attributes[key];
+        }
+    }
+
+    return true;
+}
+
+bool medBIDS::getFilesAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes)
+{
+    // Recrée le chemin vers le fichier .json
     QStringList dir(key.split("~"));
-    QString file_path(dir[0].split("_").join("/"));
-    QString file_name(dir[1] + ".json");
+    QString filePath(dir[0].split("_").join("/"));
+    QString fileName(dir[1] + ".json");
 
-    // Récupérer les tags DICOM déjà utilisés pour les mandatoryAttributes du fichier
-    QStringList filesKeys = getMandatoryAttributesKeys(3);
-
-    QString path(root_path->value() + file_path + "/" + file_name);
-    // à modifier selon le paramètre 'key'
-    QJsonObject json_obj = readJsonFile(key);
-    if(!json_obj.isEmpty()){
+    QString path(bids_path + filePath + "/" + fileName);
+    QJsonObject jsonObj = readJsonFile(path);
+    if(!jsonObj.isEmpty()){
         // Récupère les clés des tags DICOM contenus dans le fichier
-        QStringList dcm_tags = json_obj.keys();  
-        for(auto tag : dcm_tags){
-            // Si ce tag n'est pas une mandatoryKey des fichiers, alors il est additional
-            if(!filesKeys.contains(tag)){
-                if(json_obj.value(tag).isString())
-                {
-                    QString tag_value = json_obj.value(tag).toString();
-                    if(tag_value.contains("\r\n")){
-                        tag_value = tag_value.replace("\r\n", ", ");
+        QStringList dcmTags = jsonObj.keys();  
+        for(auto tag : dcmTags){
+            // Test le type de la valeur du 'tag'
+            if(jsonObj.value(tag).isString())
+            {
+                QString tagValue = jsonObj.value(tag).toString();
+                if(tagValue.contains("\r\n")){
+                    tagValue = tagValue.replace("\r\n", ", ");
+                }
+                po_attributes.values[tag] = tagValue;
+            }
+            else if(jsonObj.value(tag).isArray())
+            {
+                // Récupère le tableau pour récupérer son contenu en QString
+                QJsonArray jsonTab(jsonObj.value(tag).toArray());
+                QString types = "[";
+                // auto = QJsonValueRef
+                for(auto type : jsonTab){
+                    if(type.isString()){
+                        types.append(type.toString() + ", ");
+                    }else{
+                        types.append(type.toVariant().toString() + ", ");
                     }
-                    po_attributes.values[tag] = tag_value;
                 }
-                else if(json_obj.value(tag).isArray()) //Si c'est un array, le transforme en array pour ensuite le parcourir
-                {
-                    // Récupère le tableau pour récupérer son contenu en QString
-                    QJsonArray json_tab(json_obj.value(tag).toArray());
-                    QString types = "[";
-                    // auto = QJsonValueRef
-                    for(auto type : json_tab){
-                        if(type.isString()){
-                            types.append(type.toString() + ", ");
-                        }else{
-                            types.append(type.toVariant().toString() + ", ");
-                        }
-                    }
-                    // supprime les deux derniers caractères
-                    types.chop(2);
-                    types.append("]");
-                    po_attributes.values[tag] = types;
-                }
-                else
-                { // Si c'est un int, passe d'abord par une 'variant'
-                    po_attributes.values[tag] = json_obj.value(tag).toVariant().toString();
-                }
+                // pour affichage : supprime les deux derniers caractères
+                types.chop(2);
+                types.append("]");
+                po_attributes.values[tag] = types;
+            }
+            else
+            { // Si c'est un int, passe d'abord par une 'variant'
+                po_attributes.values[tag] = jsonObj.value(tag).toVariant().toString();
             }
         }
+
         return true;
     }
 
@@ -919,13 +989,13 @@ QVariant medBIDS::getDirectData(unsigned int pi_uiLevel, QString key)
     QVariant res;
     // Niveau des fichiers ".nii.gz"
     if(pi_uiLevel == 3){
-        // Split pour récupérer 'path' du 'filename' : ajoute l'extension nifti au filename
+        // 'split' pour récupérer 'path' du 'filename' : ajoute l'extension nifti au filename
         QStringList dir(key.split("~"));
-        QString file_path(dir[0].split("_").join("/"));
-        QString file_name(dir[1] + ".nii.gz");
+        QString filePath(dir[0].split("_").join("/"));
+        QString fileName(dir[1] + ".nii.gz");
         
-        // Indique au programme le répertoire du fichier
-        res = QVariant(root_path->value() + file_path + "/" + file_name);
+        // Indique au programme le répertoire du fichier à afficher
+        res = QVariant(bids_path + filePath + "/" + fileName);
     }
     return res;
 }
@@ -933,7 +1003,6 @@ QVariant medBIDS::getDirectData(unsigned int pi_uiLevel, QString key)
 
 int medBIDS::getAssyncData(unsigned int pi_uiLevel, QString id)
 {
-    std::cout << "Passe par getAssyncData" << std::endl;
     int iRequestId = ++s_RequestId; 
     return iRequestId;
 }
@@ -964,47 +1033,59 @@ bool medBIDS::addDirectData(QVariant data, levelMinimalEntries &pio_minimalEntri
 {
     bool bRes = false;
 
-    if(pi_uiLevel == 3){
-        // chemin de stockage/lecture
-        QString path_in = data.toString();
-        // Récupère les formats acceptés pour les fichiers : ajouter .bvec et .bval ? 
-        QStringList extensions;
-        for(QStringList formats : m_SupportedTypeAndFormats.values()){
-            extensions.append(formats);
-        }
+    // std::cout << data.toString().toStdString() << std::endl;
+    // std::cout << pio_minimalEntries.key.toStdString() << std::endl;
+    // std::cout << pio_minimalEntries.name.toStdString() << std::endl;
+    // std::cout << pio_minimalEntries.description.toStdString() << std::endl;
+    // std::cout << pi_uiLevel << std::endl;
+    // std::cout << parentKey.toStdString() << std::endl;
 
-        // Compare avec le fichier d'entrée voir s'il est correct
-        bool correct_ext = false;
-        QString file_ext;
-        for(auto ext : extensions){
-            if(path_in.contains(ext)){
-                file_ext = ext;
-                correct_ext = true;
-                break;
-            }
-        }
+    // if(pi_uiLevel == 3){
+    //     // chemin de stockage/lecture
+    //     QString path_in = data.toString();
+    //     // Récupère les formats acceptés pour les fichiers : ajouter .bvec et .bval ? 
+    //     QStringList extensions;
+    //     for(QStringList formats : m_SupportedTypeAndFormats.values()){
+    //         extensions.append(formats);
+    //     }
 
-        // Si l'extension appartient à celles possibles
-        if(correct_ext == true){
-            // Crée le chemin dans l'arborescence BIDS : parentKey contient l'identifiant créé pour un niveau fichier, donc les sous-dossiers sub, ses et data
-            QStringList sub_dirs(parentKey.split("_"));
-            // nom du fichier contenu dans .name sans l'extension donc la rajoute
-            QString file(pio_minimalEntries.name + file_ext);
-            QString path_out_copy = root_path->value() + sub_dirs.join("/") + "/" + file;
+    //     // Compare avec le fichier d'entrée voir s'il est correct
+    //     bool correct_ext = false;
+    //     QString file_ext;
+    //     for(auto ext : extensions){
+    //         if(path_in.contains(ext)){
+    //             file_ext = ext;
+    //             correct_ext = true;
+    //             break;
+    //         }
+    //     }
 
-            // Copie le fichier path_in vers path_out_copy (chemin BIDS) : true si succès
-            if(QFile::copy(path_in, path_out_copy)){
-                // Complète les minimalEntries du fichier : à l'origine ne contient que le champ .name
-                pio_minimalEntries.key = parentKey + "~" + pio_minimalEntries.name;
-                pio_minimalEntries.description = "";
-                pio_minimalEntries.type = entryType::dataset;
-            }
-            bRes = true;
-        }
-    }
+        
 
-    // Test si 'key' non vide : moyen également de tester les éléments dont elle dépend comme 'parentKey'
-    bRes = !pio_minimalEntries.key.isEmpty();
+    //     QStringList sub_dirs(parentKey.split("_"));
+    //     std::cout << bids_path.toStdString() << sub_dirs.join("/").toStdString() << std::endl;
+
+    //     // // Si l'extension appartient à celles possibles
+    //     // if(correct_ext == true){
+    //     //     // Crée le chemin dans l'arborescence BIDS : parentKey contient l'identifiant créé pour un niveau fichier, donc les sous-dossiers sub, ses et data
+    //     //     QStringList sub_dirs(parentKey.split("_"));
+    //     //     // nom du fichier contenu dans .name sans l'extension donc la rajoute
+    //     //     QString file(pio_minimalEntries.name + file_ext);
+    //     //     QString path_out_copy = bids_path + sub_dirs.join("/") + "/" + file;
+
+    //     //     // Copie le fichier path_in vers path_out_copy (chemin BIDS) : true si succès
+    //     //     if(QFile::copy(path_in, path_out_copy)){
+    //     //         // Complète les minimalEntries du fichier : à l'origine ne contient que le champ .name
+    //     //         pio_minimalEntries.key = parentKey + "~" + pio_minimalEntries.name;
+    //     //         pio_minimalEntries.description = "";
+    //     //         pio_minimalEntries.type = entryType::dataset;
+    //     //     }
+    //     //     bRes = true;
+    //     // }
+    // }
+
+    // // Test si 'key' non vide : moyen également de tester les éléments dont elle dépend comme 'parentKey'
+    // bRes = !pio_minimalEntries.key.isEmpty();
 
     return bRes;
 }
@@ -1028,16 +1109,6 @@ bool medBIDS::createPath(QList<levelMinimalEntries> &pio_path, datasetAttributes
 bool medBIDS::createFolder(levelMinimalEntries &pio_minimalEntries, datasetAttributes const &pi_attributes, unsigned int pi_uiLevel, QString parentKey)
 {
     bool bRes = false;
-    std::cout << "Appel à la classe createFolder" << std::endl;
-    if(pi_uiLevel == 0){
-        std::cout << "Appel \"createFolder\" avec les paramètres suivants" << std::endl;
-        std::cout << "pi_uiLevel = " << pi_uiLevel << std::endl;
-        std::cout << "parentKey = " << parentKey.toStdString() << std::endl;
-        std::cout << "pio_minimalEntries : " << std::endl;
-        std::cout << pio_minimalEntries.key.toStdString() << std::endl;
-        std::cout << pio_minimalEntries.name.toStdString() << std::endl;
-        std::cout << pio_minimalEntries.description.toStdString() << std::endl;
-    }
     
     return bRes;
 }

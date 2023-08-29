@@ -16,6 +16,13 @@
 set(TARGET_NAME medBIDSPlugin)
 
 ## #############################################################################
+## find requireds
+## #############################################################################
+
+find_package(ITK REQUIRED COMPONENTS ITKVtkGlue ITKIOImageBase ITKIOMeta ITKZLIB)
+include(${ITK_USE_FILE})
+
+## #############################################################################
 ## Setup version numbering
 ## #############################################################################
 
@@ -86,7 +93,9 @@ add_library(${TARGET_NAME} SHARED
 ## #############################################################################
 target_link_libraries(${TARGET_NAME} PUBLIC
         medCore
+        medWidgets
         medCoreLegacy
+        ITKIOImageBase
   )
 
 

@@ -173,7 +173,8 @@ QWidget * medStringParameterPresenter::buildLineEditPasswordEyes()
 	return pWidgetRes;
 }
 
-QWidget* medStringParameterPresenter::buildSearchPath(){
+QWidget* medStringParameterPresenter::buildSearchPath()
+{
     QWidget *widget = new QWidget;
     QHBoxLayout * searchPath = new QHBoxLayout();
 
