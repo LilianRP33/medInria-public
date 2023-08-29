@@ -44,10 +44,14 @@ medBIDS::medBIDS()
       /*m_ConnectionName("sqlite"),*/ m_instanceId(QString()),
       m_online(false), 
       //tree depth
-      m_LevelNames({"subject", "session", "data", "files"})
+      m_LevelNames({"subject", "session", "data", "files", "derivative"})
 {
     // root_path contient le chemin vers un fichier 'dataset_description.json'
     root_path = new medStringParameter("Description File", this);
+    //root_path->setCaption("Select dataset description file from BIDS repository");
+    root_path->setDescription("JSON file (dataset_description.json)");
+    std::cout << "medBids" << root_path->description().toStdString() << std::endl;
+    std::cout << "medBids" << root_path->caption().toStdString() << std::endl;
     root_path->setDefaultRepresentation(3);
 
     // Bouton pour afficher les données du 'dataset_description.json'
@@ -63,7 +67,8 @@ medBIDS::medBIDS()
     m_MandatoryKeysByLevel["Subject"] = QStringList({"id", "name", "description", "type"});
     m_MandatoryKeysByLevel["Session"] = QStringList({"id", "name", "description", "type"});
     m_MandatoryKeysByLevel["Data"] = QStringList({"id", "name", "description", "type"});
-    m_MandatoryKeysByLevel["Files"] = QStringList({"id", "SeriesDescription", "description", "type"});                                             
+    m_MandatoryKeysByLevel["Files"] = QStringList({"id", "SeriesDescription", "description", "type"});   
+    m_MandatoryKeysByLevel["Derivative"] = QStringList({"id", "SeriesDescription", "description", "type"});                                           
 }
 
 medBIDS::~medBIDS()
@@ -108,7 +113,7 @@ QJsonObject medBIDS::readJsonFile(QString filePath){
     QString content(file.readAll());
     file.close();
 
-    // QByteArray en paramètre : tableau d'octets
+    // QByteArray en paramètre : tableau d'octets -> 'toUtf8()'
     // Le transforme en objet Json pour simplifier la récupération des valeurs (similaire à QMap -> dictionnaire)
     if(!content.isEmpty()){
         QJsonDocument jsonDoc = QJsonDocument::fromJson(content.toUtf8());
@@ -223,7 +228,7 @@ bool medBIDS::connect(bool pi_bEnable)
                 QDirIterator it(bids_path, QDir::Files, QDirIterator::Subdirectories);
                 while(it.hasNext()) {
                     QString subDirs = it.next();
-                    if(subDirs.contains(".nii.gz")){
+                    if(subDirs.contains(".nii.gz") || subDirs.contains(".nii")){
                         getNiftiAttributesforMandatories(subDirs);
                         bRes = true;
                         break;
@@ -233,9 +238,9 @@ bool medBIDS::connect(bool pi_bEnable)
                 bRes = false;
             }
         }
-        m_online = bRes;
     }
 
+    m_online = bRes;
     emit connectionStatus(m_online);
 
     return bRes;
@@ -465,6 +470,8 @@ QStringList medBIDS::getMandatoryAttributesKeys(unsigned int pi_uiLevel)
             return m_MandatoryKeysByLevel["Data"];//return {"id", "name", "description", "type"};
         case 3:
             return m_MandatoryKeysByLevel["Files"];//return {"id", "SeriesDescription", "description", "type"};
+        case 4:
+            return m_MandatoryKeysByLevel["Derivative"];//return {"id", "SeriesDescription", "description", "type"};
         default:
             return QStringList();
     }
@@ -615,7 +622,7 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getFilesMinimalEntries(QS
     QDir dir(filePath);
 
     // Récupère uniqument les fichiers au format json
-    QStringList prefixes({"*.nii.gz"});
+    QStringList prefixes({"*.nii.gz", "*.nii"});
     QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Files);
     for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un fichier
@@ -666,6 +673,9 @@ QList<QMap<QString, QString>> medBIDS::getMandatoryAttributes(unsigned int pi_ui
             break;
         case 3:
             res = getFilesMandatoriesAttributes(parentId);
+            break;
+        case 4:
+            res = getDerivativeMandatoriesAttributes(parentId);
             break;
         default:
             break;
@@ -809,7 +819,7 @@ QList<QMap<QString, QString>> medBIDS::getFilesMandatoriesAttributes(const QStri
     QString filePath(bids_path + subDirs[0] + "/" + subDirs[1] + "/" + subDirs[2] + "/");
     QDir dir(filePath);
 
-    QStringList prefixes({"*.nii.gz"});
+    QStringList prefixes({"*.nii.gz", "*.nii"});
     QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Files);
     for(auto file : filesList){
         // Vérifie qu'il s'agit bien d'un fichier
@@ -827,14 +837,19 @@ QList<QMap<QString, QString>> medBIDS::getFilesMandatoriesAttributes(const QStri
             filesMap["type"] = entryTypeToString(entryType::dataset);
 
             // champ "SeriesDescription" (="name") = attribut "seriesDescription" fichier .json
-            QJsonObject jsonObj = readJsonFile(filePath + fileName + ".json");
-            // Si cette liste n'est pas vide
-            if(!jsonObj.isEmpty()){
-                filesMap["SeriesDescription"] = jsonObj.value("SeriesDescription").toString();
-            }
+            // version d'origine
+            // QJsonObject jsonObj = readJsonFile(filePath + fileName + ".json");
+            // // Si cette liste n'est pas vide
+            // if(!jsonObj.isEmpty()){
+            //     filesMap["SeriesDescription"] = jsonObj.value("SeriesDescription").toString();
+            // }
+
+            // version nom BIDS pour derivatives
+            filesMap["SeriesDescription"] = fileName;
 
             // Le reste des mandatoriesAttributes sont les données des nifti
-            QString niftiFile = filePath + fileName + ".nii.gz";
+            
+            QString niftiFile = filePath + file.fileName();
             imageIO = itk::ImageIOFactory::CreateImageIO(niftiFile.toLatin1().constData(), itk::ImageIOFactory::ReadMode);
             if (!imageIO.IsNull()){
                 // deux lignes nécessaires sinon ne reconnaît pas en tant que fichier nifti
@@ -860,7 +875,35 @@ QList<QMap<QString, QString>> medBIDS::getFilesMandatoriesAttributes(const QStri
     return filesAttributes;
 }
 
+QList<QMap<QString, QString>> medBIDS::getDerivativeMandatoriesAttributes(const QString &key)
+{
+    QList< QMap<QString, QString>> derivativeAttributes;
 
+    QStringList dir(key.split("~"));
+    QString filePath(dir[0].replace("_", "/"));
+    QString fileName(dir[1] + ".nii.gz");
+
+    QFile niftiFile(bids_path + filePath + "/" + fileName);
+    if(!niftiFile.exists()){
+        fileName = dir[1] + ".nii";
+    }
+
+    QString derivativeSubDirs("derivatives/polygon_mask/");
+    QString derivativeFilePath(bids_path + derivativeSubDirs + filePath + "/" + fileName);
+    QFileInfo file(derivativeFilePath);
+    if(file.exists()){
+        QMap<QString, QString> derivativeMap;
+
+        derivativeMap["id"] = key + "~" + derivativeSubDirs;
+        derivativeMap["SeriesDescription"] = dir[1];
+        derivativeMap["description"] = "";
+        derivativeMap["type"] = entryTypeToString(entryType::dataset);
+    
+        derivativeAttributes.append(derivativeMap);
+    }
+
+    return derivativeAttributes;
+}
 
  
 bool medBIDS::getAdditionalAttributes(unsigned int pi_uiLevel, QString id, datasetAttributes &po_attributes)
@@ -988,12 +1031,21 @@ QVariant medBIDS::getDirectData(unsigned int pi_uiLevel, QString key)
 {
     QVariant res;
     // Niveau des fichiers ".nii.gz"
-    if(pi_uiLevel == 3){
+    if(pi_uiLevel == 3 || pi_uiLevel == 4){
         // 'split' pour récupérer 'path' du 'filename' : ajoute l'extension nifti au filename
         QStringList dir(key.split("~"));
         QString filePath(dir[0].split("_").join("/"));
         QString fileName(dir[1] + ".nii.gz");
+
+        QFile niftiFile(bids_path + filePath + "/" + fileName);
+        if(!niftiFile.exists()){
+            fileName = dir[1] + ".nii";
+        }
         
+        if(pi_uiLevel == 4){
+            filePath.prepend(dir[2]);
+        }
+
         // Indique au programme le répertoire du fichier à afficher
         res = QVariant(bids_path + filePath + "/" + fileName);
     }
@@ -1021,71 +1073,166 @@ int medBIDS::getIOInterface()
  
 QMap<QString, QStringList> medBIDS::getTypeAndFormat()
 {
-    m_SupportedTypeAndFormats["Image"] = QStringList({".nii.gz"});
+    m_SupportedTypeAndFormats["Image"] = QStringList({".nii.gz", ".nii"});
     //m_SupportedTypeAndFormats["Header"] = QStringList({".json", ".bvec", ".bval"});
 
     return m_SupportedTypeAndFormats;
 }
 
 
+void medBIDS::createBIDSDerivativeSubFolders(QString parentKey, QString derivativeType, QString &newPath)
+{
+    // Défini le type de derivative
+    QString derivativeName;
+    QString derivativeDescription;
+    if(derivativeType == "mask"){
+        derivativeName = "polygon_mask";
+        derivativeDescription = "Define a polygon ROI mask";
+    }
+
+    // Crée le chemin du pipeline
+    QString pipeline = bids_path + "derivatives/" + derivativeName + "/";
+    QDir newDerivativeDir;
+    if(newDerivativeDir.mkpath(pipeline))
+    {
+        // Crée le contenu pour le fichier json
+        QJsonObject jsonObject;
+        jsonObject.insert("Name", QJsonValue("Segmentation outputs"));
+        jsonObject.insert("BIDSVersion", QJsonValue("2.1.7"));
+        jsonObject.insert("DatasetType", QJsonValue("derivative"));
+
+        QJsonObject jsonObj1;
+        jsonObj1.insert("Name", QJsonValue(derivativeName));
+
+        QJsonObject jsonObj2;
+        jsonObj2.insert("Name", QJsonValue("Manual"));
+        jsonObj2.insert("Description", QJsonValue(derivativeDescription));
+
+        QJsonArray jsonArray;
+        jsonArray.append(jsonObj1);
+        jsonArray.append(jsonObj2);
+
+        jsonObject.insert("GeneratedBy", jsonArray);
+
+        QJsonDocument jsonDoc(jsonObject);
+
+        QFile file(pipeline + "dataset_description.json");
+        if(!file.open(QIODevice::WriteOnly)){
+            qDebug() << "Impossible d'ouvrir le fichier en écriture";
+        }
+        int writtenFile = file.write(jsonDoc.toJson());
+        file.close();
+
+        if(writtenFile == -1){
+            qDebug() << "Erreur lors de l'écriture dans le fichier";
+        }
+
+        // Récupère les niveaux (sous-dossiers) parents BIDS et crée le nouveau chemin pour les derivatives
+        QStringList subDirs = parentKey.split("_");
+        newPath = pipeline + subDirs.join("/");
+        newDerivativeDir.mkpath(newPath);
+    }
+}
+
+void medBIDS::createJsonDerivativeFile(QString sourcePath, QString jsonFilePath, QString derivativeType){
+    // Crée le fichier json associé
+    QFile jsonFile(jsonFilePath);
+    if(!jsonFile.open(QIODevice::WriteOnly)){
+        qDebug() << "Impossible d'ouvrir le fichier en écriture";
+    }
+
+    QString derivativeDescription;
+    if(derivativeType == "mask"){
+        derivativeDescription = "The output nifti file is obtained using a polygon ROI segmentation";
+    }
+
+    QJsonObject jsonObject;
+    jsonObject.insert("Description", QJsonValue(derivativeDescription));
+
+    QJsonArray jsonArray;
+    jsonArray.append(QJsonValue("bids:raw:" + sourcePath));
+    jsonObject.insert("Sources", jsonArray);
+    jsonObject.insert("RawSources", jsonArray);
+
+    jsonObject.insert("Manual", QJsonValue("true"));
+
+    QJsonDocument jsonDoc(jsonObject);
+
+    int writtenFile = jsonFile.write(jsonDoc.toJson());
+    jsonFile.close();
+
+    if(writtenFile == -1){
+        qDebug() << "Erreur lors de l'écriture dans le fichier";
+    }
+}
+
 // Ajoute un fichier dans l'arborescence du logiciel (glissé-déposé), puis le copie au même endroit dans l'arborescence locale 
 bool medBIDS::addDirectData(QVariant data, levelMinimalEntries &pio_minimalEntries, unsigned int pi_uiLevel, QString parentKey)
 {
     bool bRes = false;
 
-    // std::cout << data.toString().toStdString() << std::endl;
-    // std::cout << pio_minimalEntries.key.toStdString() << std::endl;
-    // std::cout << pio_minimalEntries.name.toStdString() << std::endl;
-    // std::cout << pio_minimalEntries.description.toStdString() << std::endl;
-    // std::cout << pi_uiLevel << std::endl;
-    // std::cout << parentKey.toStdString() << std::endl;
+    std::cout << data.toString().toStdString() << std::endl;
+    std::cout << pio_minimalEntries.key.toStdString() << std::endl;
+    std::cout << pio_minimalEntries.name.toStdString() << std::endl;
+    std::cout << pio_minimalEntries.description.toStdString() << std::endl;
+    std::cout << pi_uiLevel << std::endl;
+    std::cout << parentKey.toStdString() << std::endl;
 
-    // if(pi_uiLevel == 3){
-    //     // chemin de stockage/lecture
-    //     QString path_in = data.toString();
-    //     // Récupère les formats acceptés pour les fichiers : ajouter .bvec et .bval ? 
-    //     QStringList extensions;
-    //     for(QStringList formats : m_SupportedTypeAndFormats.values()){
-    //         extensions.append(formats);
-    //     }
+    if(pi_uiLevel == 3){
+        // chemin de stockage/lecture
+        QString pathIn = data.toString();
 
-    //     // Compare avec le fichier d'entrée voir s'il est correct
-    //     bool correct_ext = false;
-    //     QString file_ext;
-    //     for(auto ext : extensions){
-    //         if(path_in.contains(ext)){
-    //             file_ext = ext;
-    //             correct_ext = true;
-    //             break;
-    //         }
-    //     }
+        // Récupère les formats acceptés pour les fichiers
+        QStringList extensions;
+        for(QStringList formats : m_SupportedTypeAndFormats.values()){
+            extensions.append(formats);
+        }
 
-        
+        // Compare avec le fichier d'entrée voir s'il est correct
+        bool correctExt = false;
+        QString fileExt;
+        for(auto ext : extensions){
+            if(pathIn.contains(ext)){
+                fileExt = ext;
+                correctExt = true;
+                break;
+            }
+        }
 
-    //     QStringList sub_dirs(parentKey.split("_"));
-    //     std::cout << bids_path.toStdString() << sub_dirs.join("/").toStdString() << std::endl;
+        // Si l'extension appartient à celles possibles
+        if(correctExt == true){
+            QString derivativeType;
+            if(pio_minimalEntries.name.contains("mask")){
+                derivativeType = "mask";
+            }
 
-    //     // // Si l'extension appartient à celles possibles
-    //     // if(correct_ext == true){
-    //     //     // Crée le chemin dans l'arborescence BIDS : parentKey contient l'identifiant créé pour un niveau fichier, donc les sous-dossiers sub, ses et data
-    //     //     QStringList sub_dirs(parentKey.split("_"));
-    //     //     // nom du fichier contenu dans .name sans l'extension donc la rajoute
-    //     //     QString file(pio_minimalEntries.name + file_ext);
-    //     //     QString path_out_copy = bids_path + sub_dirs.join("/") + "/" + file;
+            QString newPath;
+            createBIDSDerivativeSubFolders(parentKey, derivativeType, newPath);
+            QDir newDerivativeDir(newPath);
+            if(newDerivativeDir.exists()){
+                // Récupère le nom du fichier
+                QStringList derivativeFile = pio_minimalEntries.name.split("(");
+                QString fileName = derivativeFile.last().chopped(1);
+                QString niftiName(fileName + fileExt);
+                QString pathOut = newPath + "/" + niftiName;
 
-    //     //     // Copie le fichier path_in vers path_out_copy (chemin BIDS) : true si succès
-    //     //     if(QFile::copy(path_in, path_out_copy)){
-    //     //         // Complète les minimalEntries du fichier : à l'origine ne contient que le champ .name
-    //     //         pio_minimalEntries.key = parentKey + "~" + pio_minimalEntries.name;
-    //     //         pio_minimalEntries.description = "";
-    //     //         pio_minimalEntries.type = entryType::dataset;
-    //     //     }
-    //     //     bRes = true;
-    //     // }
-    // }
+                //Copie le fichier path_in vers path_out_copy (chemin BIDS) : true si succès, false si un fichier du même nom existe déjà
+                if(QFile::copy(pathIn, pathOut)){
+                    // Complète les minimalEntries du fichier : à l'origine ne contient que le champ .name
+                    pio_minimalEntries.key = parentKey + "~" + fileName;
+                    pio_minimalEntries.description = "";
+                    pio_minimalEntries.type = entryType::dataset;
 
-    // // Test si 'key' non vide : moyen également de tester les éléments dont elle dépend comme 'parentKey'
-    // bRes = !pio_minimalEntries.key.isEmpty();
+                    QString jsonName(fileName + ".json");
+                    QString sourcePath = (parentKey.split("_")).join("/") + "/" + niftiName;
+                    createJsonDerivativeFile(sourcePath, newPath + "/" + jsonName, derivativeType);
+                }
+            }
+        }
+    }
+
+    // Test si 'key' non vide : moyen également de tester les éléments dont elle dépend comme 'parentKey'
+    bRes = !pio_minimalEntries.key.isEmpty();
 
     return bRes;
 }
