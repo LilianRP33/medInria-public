@@ -125,7 +125,7 @@ public slots:
 private:
     QJsonObject readJsonFile(QString filePath); // Li et Extrait les données d'un fichier Json : fichiers médicaux ou dataset_description
     void getDatasetDescription(QJsonObject jsonObj, QString parentKey); // Traite les données du fichier 'dataset_description.json' pour les afficher : récursion pour objets imbriqués
-    void getNiftiAttributesforMandatories(QString niftiPath); // Ajouter aux mandatoriesAttributes des "Files" les clés des fichiers nifti
+    void getNiftiAttributesForMandatories(QString niftiPath, QString levelName); // Ajouter aux mandatoriesAttributes des "Files" et "Derivative" les clés des fichiers nifti
 
     QStringList getAttributesFromTsv(QString &line); // Extrait et renvoie une liste des attributs d'une ligne d'un tsv
     bool getPatientsFromTsv(); // Lit un fichier "participants.tsv" pour en extraire le contenu. Renvoie true si fichier conforme et lecture ok 
@@ -144,12 +144,14 @@ private:
     QList<QMap<QString, QString>> getFilesMandatoriesAttributes(const QString &key);
     QList<QMap<QString, QString>> getDerivativeMandatoriesAttributes(const QString &key);
 
+    QMap<QString, QString> getNiftiValuesFromFile(QString niftiFile, int level);
+
     bool getSubjectAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes);
     bool getSessionAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes);
     bool getFilesAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes);
 
     void createBIDSDerivativeSubFolders(QString parentKey, QString derivativeType, QString &newPath); // Créer les sous-dossiers pour "derivatives" dans l'arborescence BIDS afin d'y copier un fichier
-    void createJsonDerivativeFile(QString sourcePath, QString jsonFilePath, QString derivativeType); // Créer le fichier json pour un fichier derivative
+    void createJsonDerivativeFile(QString sourcePath, QString jsonFilePath, QString derivativeType, QString maskName); // Créer le fichier json pour un fichier derivative
 
 private:
     // members
