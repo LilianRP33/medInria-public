@@ -114,7 +114,6 @@ QLineEdit* medStringParameterPresenter::buildLineEditOnFinish()
 QDateEdit* medStringParameterPresenter::buildDateEdit()
 {
     QDateEdit *dateEdit = new QDateEdit;
-
     dateEdit->setToolTip(d->parameter->description());
     dateEdit->setCalendarPopup(true);
     QDate date = QDate::fromString( d->parameter->value(), "yyyyMMdd");
@@ -186,9 +185,9 @@ QWidget* medStringParameterPresenter::buildSearchPath()
     auto *pParam = d->parameter;
     connect(searchButton, &QPushButton::clicked, [=]() 
     {
-        QString sourcesBidsRepository = QFileDialog::getExistingDirectory(nullptr, tr("Select a BIDS repository"), "/home");
-        if(!sourcesBidsRepository.isEmpty()){
-            displayPath->setText(QDir::toNativeSeparators(sourcesBidsRepository));
+        QString FileSourceRepository = QFileDialog::getOpenFileName(nullptr, tr(d->parameter->description().toLocal8Bit().data()), "/home", tr("JSON file (dataset_description.json)"));
+        if(!FileSourceRepository.isEmpty()){
+            displayPath->setText(QDir::toNativeSeparators(FileSourceRepository));
             pParam->setValue(displayPath->text());
         }
     });
