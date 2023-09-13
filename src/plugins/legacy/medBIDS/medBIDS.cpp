@@ -48,7 +48,7 @@ medBIDS::medBIDS()
     root_path = new medStringParameter("Description File", this);
     // root_path->setCaption("JSON file (dataset_description.json)");
     // root_path->setDescription("Select dataset description file from BIDS repository");
-    root_path->setDefaultRepresentation(3);
+    root_path->setDefaultRepresentation(5);
 
     // Bouton pour afficher les données du 'dataset_description.json'
     descriptionButton = new medTriggerParameter("Show file content");
