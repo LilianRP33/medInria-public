@@ -170,7 +170,7 @@ void medBIDS::getJsonContent(QMap<QString, QString> &jsonContent, QJsonObject js
             if(!parentKey.isEmpty())
             {
                 // nested object : add the parent key to the last key
-                key = key.prepend(parentKey + ":");
+                key.prepend(parentKey + ":");
             }
 
             QString tagValue = jsonValue.toVariant().toString();
@@ -229,8 +229,9 @@ void medBIDS::getNiftiAttributesForMandatories(QString niftiPath){
             levelAttributes.append(niftiKey.c_str());
         }
 
-        // Add attributes contained in nifti files in the mandatoryKeys
+        // Add recovered keys contained in nifti files in the mandatoryKeys of "Files" and "Derivative"
         m_MandatoryKeysByLevel.insert("Files", levelAttributes);
+        levelAttributes.append("pipeline_name");
         m_MandatoryKeysByLevel.insert("Derivative", levelAttributes);
     }
 }
@@ -270,7 +271,7 @@ bool medBIDS::connect(bool pi_bEnable)
                 // Checks if there are sub-folders 'sub-' in the root structure
                 QDir dir(bids_path);
                 QStringList subPrefixes({"sub-*"});
-                QFileInfoList filesList = dir.entryInfoList(subPrefixes);
+                QFileInfoList filesList = dir.entryInfoList(subPrefixes, QDir::Dirs);
                 if(!filesList.isEmpty()){
                     // Find out if there are any session level in the structure
                     existSesLevel(filesList.first().absoluteFilePath());
@@ -292,7 +293,6 @@ bool medBIDS::connect(bool pi_bEnable)
                         bRes = false;
                         qDebug() << "There are no nifti files in this tree";
                     }
-
                 }else{
                     bRes = false;
                     qDebug() << "There are no sub-folders for subject entities at the root of the BIDS structure";
@@ -362,7 +362,7 @@ bool medBIDS::getPatientsFromTsv(){
             }
         }
 
-        // Key = "participant_id"; valeur = QMap with value (value) of each column (key)
+        // Key = "participant_id"; value = QMap with value (value) of each column (key)
         participant_tsv[values[0]] = patientValues;
     }
 
@@ -377,7 +377,7 @@ bool medBIDS::getSessionsFromTsv(QString parentId){
     QStringList filters({"*.tsv"});
     QFileInfoList filesList = dir.entryInfoList(filters);
     if(filesList.isEmpty() || filesList.size() != 1){
-        qDebug() << "There is no sessions file";
+        qDebug() << "There is no \"*_sessions.tsv\" file";
         return false;
     }
 
@@ -408,7 +408,7 @@ bool medBIDS::getSessionsFromTsv(QString parentId){
             }
         }
 
-        // Key = sub-..._"session_id", valeur = QMap with value (value) of each column (key)
+        // Key = sub-..._"session_id", value = QMap with value (value) of each column (key)
         QString id = parentId + "_" + values[0];
         session_tsv[id] = sessionValues;
     }
@@ -508,7 +508,7 @@ QStringList medBIDS::getLevelNames()
 QString medBIDS::getLevelName(unsigned int pi_uiLevel)
 {
     QString retVal; 
-    if (pi_uiLevel>0 && pi_uiLevel < static_cast<unsigned int>(m_LevelNames.size()))
+    if (pi_uiLevel>=0 && pi_uiLevel < static_cast<unsigned int>(m_LevelNames.size()))
     {
         retVal = m_LevelNames.value((int)pi_uiLevel);
     }
@@ -596,7 +596,7 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getSubjectMinimalEntries(
         if(!file.isFile()){
 
             if(tsvExists){
-                // Retrieve values associated to the patient 'file.fileName()' 
+                // Check that the folder is mentioned in the corresponding tsv file 
                 if(!participant_tsv.contains(file.fileName())){
                     qDebug() << "This subject sub-folder is not mentioned in the corresponding tsv file";
                 }
@@ -620,20 +620,20 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getSessionMinimalEntries(
 {
     QList<levelMinimalEntries> sessionEntries;
 
-    // Check whether the subject sub-folder has a "..._sessions.tsv" file and extracts data from it
+    // Check whether the 'parentId' subject sub-folder has a "..._sessions.tsv" file and extracts data from it
     bool tsvExists = getSessionsFromTsv(parentId);
 
     // Is placed in the parent 'subject' sub-folder to retrieve all sub-folders containing the prefix "ses-"
     QDir dir(bids_path + parentId + "/");
     QStringList prefixes({"ses-*"});
-    QFileInfoList filesList = dir.entryInfoList(prefixes);
+    QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Dirs);
     for(auto file : filesList){
         // Check that it is a folder
         if(!file.isFile()){
             QString sessionId = parentId + "_" + file.fileName();
     
             if(tsvExists){
-                // Retrieve values associated to the session 'sessionId' 
+                // Check that the folder is mentioned in the corresponding tsv file 
                 if(!session_tsv.contains(sessionId)){
                     qDebug() << "This session sub-folder is not mentioned in the corresponding tsv file";
                 }
@@ -696,24 +696,33 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getFilesMinimalEntries(QS
         if(file.isFile()){
 
             QString fileName = file.fileName().split(".")[0];
+            QString fileNameSuffixType = fileName.split("_").last();
 
             // Retains some of the entities to make it easier to identify files in medInria
-            QString fileNameSuffixType = fileName.split("_").last();
             int acqIndex = fileName.indexOf("acq");
             if(acqIndex != -1){
                 QString endName = fileName.mid(acqIndex);
-                QString acqEntitie = endName.split("_")[0];
-                QString acqName = acqEntitie.split("-")[1];
+                QString acqEntity = endName.split("_")[0];
+                QString acqLabel = acqEntity.split("-")[1];
 
-                fileNameSuffixType.append(" - " + acqName);
+                fileNameSuffixType.append(" - " + acqLabel);
+            }
+
+            int viewIndex = fileName.indexOf("view");
+            if(viewIndex != -1){
+                QString endName = fileName.mid(viewIndex);
+                QString viewEntity = endName.split("_")[0];
+                QString viewLabel = viewEntity.split("-")[1];
+
+                fileNameSuffixType.append(" - " + viewLabel);
             }
 
             int runIndex = fileName.indexOf("run");
             if(runIndex != -1){
                 QString endName = fileName.mid(runIndex);
-                QString numRun = endName.split("_")[0];
+                QString runEntity = endName.split("_")[0];
 
-                fileNameSuffixType.append(" - " + numRun);
+                fileNameSuffixType.append(" - " + runEntity);
             }
 
             levelMinimalEntries entry;
@@ -802,7 +811,7 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getDerivativeMinimalEntri
         for(auto devFile : derivativeFiles)
         {
             // Extract the subpath from "/derivatives" to the end to complete the 'id' field for minimalEntries
-            int derivativeIndex = devFile.indexOf("derivatives");
+            int derivativeIndex = devFile.lastIndexOf("derivatives");
             QString derivativeFilePath;
             if(derivativeIndex != -1){
                 devFile.chop(5);
@@ -810,20 +819,25 @@ QList<medAbstractSource::levelMinimalEntries> medBIDS::getDerivativeMinimalEntri
             }
 
             // Extract the label of the 'desc' entity to complete the 'name' field of minimalEntries
-            int descriptionIndex = devFile.indexOf("desc");
+            int descriptionIndex = derivativeFilePath.lastIndexOf("desc");
             QString devDescriptionName;
             if(descriptionIndex != -1){
-                QString endName = devFile.mid(descriptionIndex);
-                QString descName = endName.split("_")[0];
-                devDescriptionName = descName.split("-")[1];
+                QString endName = derivativeFilePath.mid(descriptionIndex);
+                QString descEntity = endName.split("_")[0];
+                devDescriptionName = descEntity.split("-")[1];
+            }
+
+            QString dataTypeSuffix = derivativeFilePath.split("_").last();
+            if(!devDescriptionName.contains(dataTypeSuffix)){
+                devDescriptionName.prepend(dataTypeSuffix + " - ");
             }
 
             // Extract the 'run' entity to maintain file differentiation : only the 'run' added after 'desc' entity
-            int runIndex = devFile.lastIndexOf("run");
+            int runIndex = derivativeFilePath.lastIndexOf("run");
             if(runIndex != -1 && (runIndex > descriptionIndex && descriptionIndex != -1)){
-                QString endName = devFile.mid(runIndex);
-                QString numRun = endName.split("_")[0];
-                devDescriptionName.append(" - " + numRun);
+                QString endName = derivativeFilePath.mid(runIndex);
+                QString runEntity = endName.split("_")[0];
+                devDescriptionName.append(" - " + runEntity);
             }
 
             levelMinimalEntries entry;
@@ -895,7 +909,7 @@ QList<QMap<QString, QString>> medBIDS::getSubjectMandatoriesAttributes(const QSt
         if(!file.isFile()){
 
             if(tsvExists){
-                // Retrieve values associated to the patient 'file.fileName()' 
+                // Check that the folder is mentioned in the corresponding tsv file
                 if(!participant_tsv.contains(file.fileName())){
                     qDebug() << "This subject sub-folder is not mentioned in the corresponding tsv file";
                 }
@@ -925,14 +939,14 @@ QList<QMap<QString, QString>> medBIDS::getSessionMandatoriesAttributes(const QSt
     // Is placed in the 'subject' sub-folder to retrieve all sub-folders containing the prefix "ses-"
     QDir dir(bids_path + key + "/");
     QStringList prefixes({"ses-*"});
-    QFileInfoList filesList = dir.entryInfoList(prefixes);
+    QFileInfoList filesList = dir.entryInfoList(prefixes, QDir::Dirs);
     for(auto file : filesList){
         // Check that it is a folder
         if(!file.isFile()){
             QString sessionId = key + "_" + file.fileName();
     
             if(tsvExists){
-                // Retrieve values associated to the session 'sessionId' 
+                // Check that the folder is mentioned in the corresponding tsv file 
                 if(!session_tsv.contains(sessionId)){
                     qDebug() << "This session sub-folder is not mentioned in the corresponding tsv file";
                 }
@@ -998,12 +1012,17 @@ QMap<QString, QString> medBIDS::getNiftiValuesFromFile(QString niftiFile, QStrin
             qDebug() << e.GetDescription();
         }
 
-        // Get the values for each nifti key
         itk::MetaDataDictionary& metaDataDictionary = imageIO->GetMetaDataDictionary();
-        for(int i=4; i < levelKeys.size(); i++){
-            std::string niftiValue;
-            itk::ExposeMetaData(metaDataDictionary, levelKeys[i].toStdString(), niftiValue);
-            niftiValues[levelKeys[i]] = niftiValue.c_str();
+
+        std::vector<std::string> stdVectorKeys = metaDataDictionary.GetKeys();
+        QVector<std::string> niftiKeys = QVector<std::string>::fromStdVector(stdVectorKeys);
+        // Get the values for each nifti key contained in the mandatoryKeys of the levelName
+        for(int i=0; i < levelKeys.size(); i++){
+            if(niftiKeys.contains(levelKeys[i].toStdString())){
+                std::string niftiValue;
+                itk::ExposeMetaData(metaDataDictionary, levelKeys[i].toStdString(), niftiValue);
+                niftiValues[levelKeys[i]] = niftiValue.c_str();
+            }
         }
     }
 
@@ -1032,23 +1051,32 @@ QList<QMap<QString, QString>> medBIDS::getFilesMandatoriesAttributes(const QStri
             filesMap["description"] = "";
             filesMap["type"] = entryTypeToString(entryType::dataset);
 
-            // Retains some of the entities to make it easier to identify files in medInria
             QString fileNameSuffixType = fileName.split("_").last();
+            // Retains some of the entities to make it easier to identify files in medInria
             int acqIndex = fileName.indexOf("acq");
             if(acqIndex != -1){
                 QString endName = fileName.mid(acqIndex);
-                QString acqEntitie = endName.split("_")[0];
-                QString acqName = acqEntitie.split("-")[1];
+                QString acqEntity = endName.split("_")[0];
+                QString acqLabel = acqEntity.split("-")[1];
 
-                fileNameSuffixType.append(" - " + acqName);
+                fileNameSuffixType.append(" - " + acqLabel);
+            }
+
+            int viewIndex = fileName.indexOf("view");
+            if(viewIndex != -1){
+                QString endName = fileName.mid(viewIndex);
+                QString viewEntity = endName.split("_")[0];
+                QString viewLabel = viewEntity.split("-")[1];
+
+                fileNameSuffixType.append(" - " + viewLabel);
             }
 
             int runIndex = fileName.indexOf("run");
             if(runIndex != -1){
                 QString endName = fileName.mid(runIndex);
-                QString numRun = endName.split("_")[0];
+                QString runEntity = endName.split("_")[0];
 
-                fileNameSuffixType.append(" - " + numRun);
+                fileNameSuffixType.append(" - " + runEntity);
             }
 
             filesMap["SeriesDescription"] = fileNameSuffixType;
@@ -1092,7 +1120,6 @@ QList<QMap<QString, QString>> medBIDS::getDerivativeMandatoriesAttributes(const 
             if(derivativesFilesDir.exists())
             {
                 // Is placed in each pipeline to retrieve all .json files
-                std::cout << derivativesFilesDir.absolutePath().toStdString() << std::endl;
                 QDirIterator it(derivativesFilesDir.absolutePath(), QDir::Files, QDirIterator::Subdirectories);
                 while(it.hasNext()){
                     QString subFilePath = it.next();
@@ -1145,18 +1172,23 @@ QList<QMap<QString, QString>> medBIDS::getDerivativeMandatoriesAttributes(const 
             }
 
             // Extract the label of the 'desc' entity to complete the 'name' field of minimalEntries
-            int descriptionIndex = devFile.indexOf("desc");
+            int descriptionIndex = derivativeFilePath.lastIndexOf("desc");
             QString devDescriptionName;
             if(descriptionIndex != -1){
-                QString endName = devFile.mid(descriptionIndex);
-                QString descName = endName.split("_")[0];
-                devDescriptionName = descName.split("-")[1];
+                QString endName = derivativeFilePath.mid(descriptionIndex);
+                QString descLabel = endName.split("_")[0];
+                devDescriptionName = descLabel.split("-")[1];
+            }
+
+            QString dataTypeSuffix = derivativeFilePath.split("_").last();
+            if(!devDescriptionName.contains(dataTypeSuffix)){
+                devDescriptionName.prepend(dataTypeSuffix + " - ");
             }
 
             // Extract the 'run' entity to maintain file differentiation : only the 'run' added after 'desc' entity
-            int runIndex = devFile.lastIndexOf("run");
+            int runIndex = derivativeFilePath.lastIndexOf("run");
             if(runIndex != -1 && (runIndex > descriptionIndex && descriptionIndex != -1)){
-                QString endName = devFile.mid(runIndex);
+                QString endName = derivativeFilePath.mid(runIndex);
                 QString numRun = endName.split("_")[0];
                 devDescriptionName.append(" - " + numRun);
             }
@@ -1166,6 +1198,7 @@ QList<QMap<QString, QString>> medBIDS::getDerivativeMandatoriesAttributes(const 
             derivativeMap["SeriesDescription"] = devDescriptionName;
             derivativeMap["description"] = "";
             derivativeMap["type"] = entryTypeToString(entryType::dataset);
+            derivativeMap["pipeline_name"] = derivativeFilePath.split("/")[1];
 
             // Retrieve nifti metadata to complete the mandatoriesAttributes
             derivativeMap.insert(getNiftiValuesFromFile(devFile + ".nii.gz", "Derivative"));
@@ -1450,7 +1483,7 @@ bool medBIDS::createBIDSDerivativeSubFolders(QString parentKey, QString derivati
             qDebug() << "Writing error to the file" << file.fileName();
         }
 
-        // Retrieves the parent BIDS levels (sub-folders) from 'parentKey' and creates the same path for the derivatives in correspondant pipeline
+        // Retrieve the parent BIDS levels (sub-folders) from 'parentKey' and creates the same path for the derivatives in correspondant pipeline
         QStringList subDirs = parentKey.split("~");
         QStringList pathDirs = subDirs[0].split("_");
         newPath = pipeline + pathDirs.join("/");
@@ -1531,7 +1564,7 @@ bool medBIDS::addDirectData(QVariant data, levelMinimalEntries &pio_minimalEntri
                 QString Label = pio_minimalEntries.name.split("(")[0];
                 QString segmentationLabel = Label.replace(" ", "");
 
-                // Keep the entities by adding the appropriate 'desc' entity to segmentation -> to differentiate from the source file
+                // Keep the entities by adding the appropriate 'desc' entity to segmentation -> to differentiate from the source raw file
                 QStringList key = parentKey.split("~");
                 QStringList parentFileEntities = key.last().split("_");
                 parentFileEntities.removeLast();
@@ -1560,9 +1593,16 @@ bool medBIDS::addDirectData(QVariant data, levelMinimalEntries &pio_minimalEntri
                     pio_minimalEntries.type = entryType::dataset;
 
                     QString jsonName(newFileName  + ".json");
-                    QString sourcePath = (key[0].split("_")).join("/") + "/" + key[1] + fileExt;
+
+                    QString rawFilePath(key[0].split("_").join("/"));
+                    QString rawFileName(key[1] + ".nii.gz");
+                    QFile rawNiftiFile(bids_path + rawFilePath + "/" + rawFileName);
+                    if(!rawNiftiFile.exists()){
+                        rawFileName = key[1] + ".nii";
+                    }
+                    QString rawSourceFilePath = rawFilePath + '/' + rawFileName;
                     // Create the json sidecar file to the derivative file
-                    createJsonDerivativeFile(sourcePath, newPath + "/" + jsonName, derivativeType);
+                    createJsonDerivativeFile(rawSourceFilePath, newPath + "/" + jsonName, derivativeType);
                 }
             }
         }

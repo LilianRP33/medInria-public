@@ -209,14 +209,14 @@ private:
  * @param jsonContent [in] [out] A reference to the Qmap in which the content of the json will be stored
  * @param jsonTab [in] the QJsonArray to be visited
  * @param parentKey [in] used to store the multiple keys on which a value may depend -> recursion
- * @param key [in] the key in the QJsonObject corresponding to this QJsonArray
+ * @param key [in] the last key in the QJsonObject corresponding to this QJsonArray
  * @return a QString of the array content
 */
 
 /**
- * @fn void medBIDS::getJsonContentQMap<QString, QString> &jsonContent, QJsonObject jsonObj, QString parentKey)
+ * @fn void medBIDS::getJsonContent(QMap<QString, QString> &jsonContent, QJsonObject jsonObj, QString parentKey)
  * @brief recursive function : read the data contained in a QJsonObject
- * @details stores the content in a QMap passed in parameter
+ * @details allow to read nested QJsonObject
  * @param jsonContent [in] [out] A reference to the Qmap in which the content of the json will be stored
  * @param jsonObj [in] the QJsonObject which is read
  * @param parentKey [in] used to store the multiple keys on which a value may depend -> recursion
@@ -228,8 +228,10 @@ private:
 /**
  * @fn void medBIDS::existSesLevel(QString subEntitieDir)
  * @brief determine whether it is a 5-level or 4-level tree structure : whether there is a level of sessions entities or not
- * @details sets a boolean ('sesLevel') to true if there is a 'ses' entity. This information is used to adapt the reading of a BIDS structure in a dynamic way
- * @param subEntitieDir [in] the directory of one of the subjects of the study
+ * @details set a boolean ('sesLevel') to true if there is a 'ses' entity. 
+ * This information is used to adapt the reading of a BIDS structure in a dynamic way.
+ * In this version, a tree structure is considered to have the same number of levels in each subject sub-folder.
+ * @param subEntitieDir [in] the directory of one of the subjects sub-folders of the tree
 */
 
 /**
@@ -243,9 +245,9 @@ private:
 
 /**
  * @fn QStringList medBIDS::getAttributesFromTsv(QString &line)
- * @brief read a line of a tsv file to separate the values in each column 
+ * @brief read a line of a tsv file to separate the values of each column 
  * @param line [in] the line to be decomposed
- * @return a QStringList containing all the values on the same line
+ * @return a QStringList containing all the values of the same line
 */
 
 /**
@@ -258,8 +260,8 @@ private:
 /**
  * @fn bool medBIDS::getSessionsFromTsv(QString parentId)
  * @brief try to open and read a "sub-..._sessions.tsv" file of the 'parentId' sub-folder
- * @param parentId [in] the parent sub-folder corresponding to a subject entity
- * @details completed a QMap<QString, QMap<QString, QString>> 'session_tsv' containing the information about a session of a subject (patient) 
+ * @details completed a QMap<QString, QMap<QString, QString>> 'session_tsv' containing the information about a session of a subject 
+ * @param parentId [in] the id of the parent sub-folder corresponding to a subject entity
  * @return true if the file is correclty opened and its content complies with the BIDS standard, false otherwise
 */
 
@@ -268,23 +270,23 @@ private:
 
 /**
  * @fn QList<QMap<QString, QString>> medBIDS::getSubjectMandatoriesAttributes(const QString &key)
- * @brief search for sub-folders corresponding to the subject entity (patient) at the root of the tree structure and determines the minimalEntries in a QMap<QString, QString> for each of them
+ * @brief search for sub-folders corresponding to the subject entity (patient) at the root of the tree structure and determines the value of each mandatory keys in a QMap<QString, QString> for each of them
  * @param key [in] empty QString
  * @details id = sub-..., name = sub-... -> sub-folder name
- * @return a QList containing the QMap of each patient 
+ * @return a QList containing the QMap of each sub-folder of subject 
 */
 
 /**
  * @fn QList<QMap<QString, QString>> medBIDS::getSessionMandatoriesAttributes(const QString &key)
- * @brief search for sub-folders corresponding to the session entity (session of an exam) in the 'bids_path + key' path of the tree structure and determines the minimalEntries in a QMap<QString, QString> for each of them
+ * @brief search for sub-folders corresponding to the session entity (session of an exam for a subject) in the 'bids_path + key' path of the tree structure and determines the value of each mandatory keys in a QMap<QString, QString> for each of them
  * @param key [in] contains the id of the parent sub-folder (=subject entity) : key = sub-...
  * @details id = sub-..._ses-..., name = ses-... -> 'ses-...' : session sub-folder name
- * @return a QList containing the QMap of each session 
+ * @return a QList containing the QMap of each sub-folder of session 
 */
 
 /**
  * @fn QList<QMap<QString, QString>> medBIDS::getDataMandatoriesAttributes(const QString &key)
- * @brief search for sub-folders corresponding to the data type of the files in the 'bids_path + key' path of the tree structure and determines the minimalEntries in a QMap<QString, QString> for each of them
+ * @brief search for sub-folders corresponding to the data type of the files in the 'bids_path + key' path of the tree structure and determines the value of each mandatory keys in a QMap<QString, QString> for each of them
  * @param key [in] contains the id of the parent sub-folder (=session entity): key = sub-..._ses-...
  * @details id = sub-..._ses-..._<data type>, name = <data type> -> <data type> : data sub-folder name
  * @return a QList containing the QMap of each sub-folder of data type 
@@ -293,29 +295,29 @@ private:
 
 /**
  * @fn QMap<QString, QString> medBIDS::getNiftiValuesFromFile(QString niftiFile, QString levelName)
- * @brief reads a nifti file to extract its metadata
+ * @brief read a nifti file to extract its metadata
+ * @details the levelName is used to differentiate between two levels with possible different mandatoryKeys : "Files" and "Derivatives"
  * @param niftiFile [in] the path of the file being read
  * @param levelName [in] the level at which the file is located in the tree structure
- * @details the levelName is used to differentiate between two levels with possible different mandatoryKeys : "Files" and "Derivatives"
  * @return a QMap<QString, QString> containing the attributes values for each key
 */
 
 /**
  * @fn QList<QMap<QString, QString>> medBIDS::getFilesMandatoriesAttributes(const QString &key)
- * @brief search for nifti files in the 'bids_path + key' path of the tree structure and determines the minimalEntries in a QMap<QString, QString> for each of them
+ * @brief search for nifti files in the 'bids_path + key' path of the tree structure and determines the value of each mandatory keys in a QMap<QString, QString> for each of them
  * @param key [in] contains the id of the parent sub-folder (=<data type>): key = sub-..._ses-..._<data type>
  * @details id = sub-..._ses-..._<data type>~<filename>
- * name = main entities contained in the file name -> entities : acq, run and suffix of the data type
- * the completed QMap also contains file matadata attributes obtained with medBIDS::getNiftiValuesFromFile() function
+ * name = main entities contained in the file name -> possible entities (in order) : suffix (= data type), acq, run
+ * the completed QMap also contains nifti attributes obtained with medBIDS::getNiftiValuesFromFile() function
  * @return a QList containing the QMap of each nifti file
 */
 
 /**
  * @fn QList<QMap<QString, QString>> medBIDS::getDerivativeMandatoriesAttributes(const QString &key)
- * @brief search for nifti derivative data files in the 'bids_path + derivatives/' path of the tree structure and determines the minimalEntries in a QMap<QString, QString> for each of them
+ * @brief search for nifti derivative data files in the 'bids_path + derivatives/' path of the tree structure and determines the value of each mandatory keys in a QMap<QString, QString> for each of them
  * @param key [in] contains the id of the parent raw file : id = sub-..._ses-..._<data type>~<filename>
  * @details id = sub-..._ses-..._<data type>~<filename>~<derivatie file path> -> <derivative file path> : contains the path from "derivatives" to the end (filename)
- * name = main entities contained in the derivative data file name -> entities : desc, run
+ * name = main entities contained in the derivative data file name -> possible entities (in order) : suffix (= data type of segmentation), desc, run
  * @return a QList containing the QMap of each nifti file 
 */
 
@@ -324,37 +326,37 @@ private:
 
 /**
  * @fn bool medBIDS::getSubjectAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes)
- * @brief determines the additional attributes to be displayed when sub-folders subject level information are shown
- * @param key [in] contains the sub-folder 'subject' id (= id of the minimalEntries) 
- * @param po_attributes [in] [out] stores additional values
+ * @brief determine the additional attributes to be displayed when sub-folders subject level information are shown
  * @details the additional attributes are determined from the fields in the "participants.tsv" file for a subject sub-folder, extracted in the QMap "participants_tsv" filled in by medBIDS::getPatientsFromTsv() function 
+ * @param key [in] contains the sub-folder 'subject' id (= id created for the mandatory attributes) 
+ * @param po_attributes [in] [out] stores additional values
  * @return true if the additional attributes have been retrieved, false otherwise
 */
 
 /**
  * @fn bool medBIDS::getSessionAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes)
- * @brief determines the additional attributes to be displayed when sub-folders session level information are shown
- * @param key [in] contains the sub-folder 'session' id (= id of the minimalEntries) 
- * @param po_attributes [in] [out] stores additional values
+ * @brief determine the additional attributes to be displayed when sub-folders session level information are shown
  * @details the additional attributes are determined from the fields in the "*_sessions.tsv" file for a session sub-folder, extracted in the QMap "sessions_tsv" filled in by medBIDS::getSessionsFromTsv() function 
+ * @param key [in] contains the sub-folder 'session' id (= id created for the mandatory attributes) 
+ * @param po_attributes [in] [out] stores additional values
  * @return true if the additional attributes have been retrieved, false otherwise
 */
 
 /**
  * @fn bool medBIDS::getDataAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes)
- * @brief determines the additional attributes to be displayed when sub-folders data level information are shown
- * @param key [in] contains the sub-folder 'data' id (= id of the minimalEntries) 
- * @param po_attributes [in] [out] stores additional values
- * @details the additional attributes are determined from the fields in the "*_scans.tsv" file for a data sub-folder, only the fields relating to files dependant on this data type 
+ * @brief determine the additional attributes to be displayed when sub-folders data level information are shown
+ * @details the additional attributes are determined from the fields in the "*_scans.tsv" file for a data sub-folder, only the fields relating to files dependant on this data type
+ * @param key [in] contains the sub-folder 'data' id (= id created for the mandatory attributes) 
+ * @param po_attributes [in] [out] stores additional values 
  * @return true if the additional attributes have been retrieved, false otherwise
 */
 
 /**
  * @fn bool medBIDS::getFilesAdditionalAttributes(const QString &key, medAbstractSource::datasetAttributes &po_attributes)
- * @brief determines the additional attributes to be displayed when files information are shown
- * @param key [in] contains the 'file' id (= id of the minimalEntries) 
- * @param po_attributes [in] [out] stores additional values
- * @details the additional attributes are determined from the sidecar json who contains DICOM metadata on the acquisition context 
+ * @brief determine the additional attributes to be displayed when files information are shown
+ * @details the additional attributes are determined from the sidecar json who contains DICOM metadata on the acquisition context
+ * @param key [in] contains the 'file' id (= id created for the mandatory attributes) 
+ * @param po_attributes [in] [out] stores additional values 
  * @return true if the additional attributes have been retrieved, false otherwise
 */
 
@@ -373,21 +375,21 @@ private:
 
 /**
  * @fn bool medBIDS::createBIDSDerivativeSubFolders(QString parentKey, QString derivativeType, QString &newPath)
- * @brief creates pipelines sub-folders in which to store derivative data files according to the standard
+ * @brief create pipelines sub-folders in which to store derivative data files according to the standard
+ * @details create also a json file in sub-folders pipelines to define the segmentation context
  * @param parentKey [in] contains the id of the parent raw file 
  * @param derivativeType [in] the derivation type applied from the segmentation
  * @param newPath [in] [out] defines the path to copy the file according to the sub-folders created
- * @details defines also a json file in sub-folders pipelines to define the segmentation context
  * @return true if sub-folders have been created correctly, false otherwise
 */
 
 /**
  * @fn void medBIDS::createJsonDerivativeFile(QString sourcePath, QString jsonFilePath, QString derivativeType)
- * @brief creates a json sidecar file to the derivative data file containing the path to the raw file used in the creation of this derivative data file
+ * @brief create a json sidecar file to the derivative data file containing the path to the raw file used in the creation of this derivative data file
+ * @details 'derivativeType' parameter allows to customise the values of the fields in the json file
  * @param sourcePath [in] path of the source raw file
  * @param jsonFilePath [in] the path where the file should be created
  * @param derivativeType [in] the derivation type applied from the segmentation
- * @details 'derivativeType' parameter allows to customise the values of the fields in the json file
 */
 
 
