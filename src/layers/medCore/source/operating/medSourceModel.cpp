@@ -868,6 +868,8 @@ bool medSourceModel::refresh(QModelIndex const &pi_index)
     QList<QStringList> stack;
     stack.push_back(QStringList());
 
+    d->sectionNames.clear();
+
     auto * pStartItem = getItem(pi_index);
     int iStartLevel = pStartItem->level();
 
@@ -1021,6 +1023,9 @@ bool medSourceModel::fetchColumnNames(const QModelIndex &index/*int const &iLeve
     
     if (bRes)
     {
+        // QSet<QString> keysDiff = d->columnNameByLevel[item->level()+1].toSet().subtract(attributes.toSet());
+        // if(!keysDiff.empty())
+        // {
         d->columnNameByLevel[item->level()+1] = attributes;
         attributes.pop_front(); //To remove the key of minimal entries structure
         
@@ -1059,10 +1064,12 @@ void medSourceModel::populateLevel(QModelIndex const & index)
     int iLevel = pItem->level() + 1;
 
 
-    if (!d->columnNameByLevel.contains(iLevel))
-    {
-        fetchColumnNames(index);
-    }
+    // if (!d->columnNameByLevel.contains(iLevel))
+    // {
+    //     fetchColumnNames(index);
+    // }
+
+    fetchColumnNames(index);
 
     if (pItem->data(0, 101).toBool())
     {
